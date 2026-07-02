@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+out/
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE — ignore most of .vscode/ (per-user state) but ship the shared
+# workspace settings (line endings, etc.) so cloners get them automatically.
+.vscode/*
+!.vscode/settings.json
+.idea/
+.vs/
+
+# Local AI-tool skill/config dirs (each contributor's own setup, never committed)
+.kiro/skills/
+.windsurf/skills/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bun
+# bun.lock is intentionally committed for supply-chain integrity — do not add to .gitignore
+
+# Drizzle
+drizzle/
+
+# Logs
+*.log
+pino-pretty.log
+
+# Test coverage
+coverage/
+
+# Playwright CLI debug artifacts (DOM snapshots, console logs, screenshots)
+.playwright-cli/

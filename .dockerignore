@@ -1,0 +1,17 @@
+# Top-level node_modules entry only matches /node_modules — use **/ to catch
+# nested ones like apps/web/node_modules so host-side workspace links don't
+# leak into the build context and override Bun's container-side linking.
+**/node_modules
+**/.next
+**/dist
+**/coverage
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.local
+.git
+.agents
+.kiro
+.windsurf

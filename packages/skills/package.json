@@ -1,0 +1,31 @@
+{
+  "name": "@redpoint-ai/skills",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Redpoint",
+  "description": "Skill runtime for the RedpointAI agent platform — loader, registry, and router",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RedPointGlobal/redpoint-ai.git",
+    "directory": "packages/skills"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "ai": "6.0.174",
+    "gray-matter": "4.0.3",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.12"
+  }
+}

@@ -1,0 +1,27 @@
+# CODEOWNERS — review routing for the RedpointAI repository.
+# Replace <<TEAM_OR_HANDLES>> placeholders with real GitHub team slugs or usernames.
+# Format: <pattern>  <owner> [<owner> ...]
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: everything not matched below
+*                           <<TEAM_OR_HANDLES>>
+
+# Server
+apps/server/                <<TEAM_OR_HANDLES>>
+
+# Web UI
+apps/web/                   <<TEAM_OR_HANDLES>>
+
+# MCP / RPI integration
+packages/mcp-rpi/           <<TEAM_OR_HANDLES>>
+
+# Shared packages
+packages/shared/            <<TEAM_OR_HANDLES>>
+packages/skills/            <<TEAM_OR_HANDLES>>
+
+# Skills content
+skills/                     <<TEAM_OR_HANDLES>>
+
+# Docs
+docs/                       <<TEAM_OR_HANDLES>>
+*.md                        <<TEAM_OR_HANDLES>>

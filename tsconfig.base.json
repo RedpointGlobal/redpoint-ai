@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0",
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": ".",
+    "paths": {
+      "@redpoint-ai/shared": ["./packages/shared/src"],
+      "@redpoint-ai/shared/*": ["./packages/shared/src/*"],
+      "@redpoint-ai/skills": ["./packages/skills/src"],
+      "@redpoint-ai/skills/*": ["./packages/skills/src/*"],
+      "@redpoint-ai/mcp-rpi": ["./packages/mcp-rpi/src"],
+      "@redpoint-ai/mcp-rpi/*": ["./packages/mcp-rpi/src/*"]
+    }
+  }
+}

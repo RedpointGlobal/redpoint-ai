@@ -1,0 +1,26 @@
+# Force LF line endings for all text files regardless of platform.
+# Prevents Windows git's default core.autocrlf=true from showing phantom
+# diffs when files on disk use LF (the canonical state for this repo).
+* text=auto eol=lf
+
+# Common binary types — never normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.db binary
+
+# Lockfiles — preserve byte-for-byte; no eol conversion.
+bun.lock -text
+package-lock.json -text
+yarn.lock -text

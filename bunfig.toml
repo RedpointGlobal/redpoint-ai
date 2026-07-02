@@ -1,0 +1,8 @@
+[install]
+peer = false
+# Hard-fail `bun install` on Bun versions outside the engines.bun range in package.json,
+# so customers with too-old Bun get a clear error instead of cryptic native-compile failures.
+engine-strict = true
+
+[test]
+timeout = 30000

@@ -1,0 +1,138 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "4100:4100"  # A2A inbound server (only active when A2A_ENABLED=true)
+    environment:
+      - PORT=3000
+      # AUTH_REQUIRED=false is a DEV DEFAULT for the README's "non-dev evaluation"
+      # path. Set AUTH_REQUIRED=true (and configure AUTH_SECRET / IDP) for any
+      # real deployment — copying this compose file as-is into prod is unsafe.
+      - AUTH_REQUIRED=false
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_RESOURCE_NAME=${AZURE_OPENAI_RESOURCE_NAME:-}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-}
+      # Seed default for the RPI MCP URL — overrides the bun-run-dev default
+      # (localhost:3002) so the seeded workspace points at the mcp-rpi service
+      # name on the compose network. Read by apps/server/src/store/seed.ts.
+      - SEED_RPI_MCP_URL=http://mcp-rpi:3002/mcp
+      - A2A_ENABLED=${A2A_ENABLED:-false}
+      - A2A_WORKSPACE_ID=${A2A_WORKSPACE_ID:-}
+      - A2A_BEARER_TOKEN=${A2A_BEARER_TOKEN:-}
+      # Narrow SQLite DB path so the persistence volume below mounts only the
+      # DB directory, not the whole app — earlier scope masked code on rebuild.
+      - DB_FILE_NAME=/app/data/redpoint-ai.db
+    volumes:
+      - server-data:/app/data
+      - ./skills:/app/skills
+    healthcheck:
+      test: ["CMD", "bun", "--eval", "fetch('http://localhost:3000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://server:3000}
+      # AUTH_REQUIRED=false matches the server + mcp-rpi services. apps/web's
+      # proxy.ts checks this same env var to decide whether to gate routes
+      # behind /login. Without it, the container's process.env.AUTH_REQUIRED
+      # is undefined and every logged-out user gets bounced to the API-key
+      # login form even when the rest of the stack is auth-off.
+      - AUTH_REQUIRED=false
+      - AUTH_SECRET=${AUTH_SECRET:-changeme-generate-with-openssl-rand-base64-32}
+      # AUTH_TRUST_HOST=true is safe for localhost docker compose (browser →
+      # host port → container loopback). For any INTERNET-EXPOSED deployment,
+      # set AUTH_URL=https://your-domain.com instead and remove this line.
+      - AUTH_TRUST_HOST=true
+      # AUTH_URL pins the canonical URL Auth.js uses for redirects (login
+      # callback, logout). Without it, the container's 0.0.0.0 bind address
+      # leaks into redirects and the browser can't resolve it.
+      - AUTH_URL=${AUTH_URL:-http://localhost:3001}
+      # The NextAuth Credentials provider in apps/web/lib/auth.ts calls RPI's
+      # /connect/token endpoint on login. Web container needs the same RPI
+      # OAuth + URL config the mcp-rpi service has; without these, login
+      # fails with "RPI_INTEGRATION_API_URL not configured".
+      - RPI_INTEGRATION_API_URL=${RPI_INTEGRATION_API_URL:-}
+      - RPI_OAUTH_CLIENT_ID=${RPI_OAUTH_CLIENT_ID:-}
+      - RPI_OAUTH_CLIENT_SECRET=${RPI_OAUTH_CLIENT_SECRET:-}
+      - RPI_DEFAULT_CLIENT_ID=${RPI_DEFAULT_CLIENT_ID:-}
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      # Force IPv4 — Next.js binds only on 0.0.0.0; localhost inside the
+      # container resolves to ::1 first, which has nothing listening.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3001/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+
+  mcp-rpi:
+    build:
+      context: .
+      dockerfile: packages/mcp-rpi/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      - MCP_HTTP_PORT=3002
+      # AUTH_REQUIRED=false matches the server service — both auth layers off
+      # together for the dev compose path. Set both to true (and configure
+      # AUTH_SECRET / OIDC) for any non-dev deployment.
+      - AUTH_REQUIRED=false
+      - RPI_INTEGRATION_API_URL=${RPI_INTEGRATION_API_URL:-}
+      - RPI_OAUTH_CLIENT_ID=${RPI_OAUTH_CLIENT_ID:-}
+      - RPI_OAUTH_CLIENT_SECRET=${RPI_OAUTH_CLIENT_SECRET:-}
+      - RPI_DEFAULT_CLIENT_ID=${RPI_DEFAULT_CLIENT_ID:-}
+      - RPI_PROXY_USER=${RPI_PROXY_USER:-}
+      - RPI_PROXY_PASS=${RPI_PROXY_PASS:-}
+      - RPI_PROXY_ENABLED=${RPI_PROXY_ENABLED:-}
+    healthcheck:
+      test: ["CMD", "bun", "--eval", "fetch('http://localhost:3002/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+
+  postgres:
+    image: postgres:16.13-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=redpoint_ai
+      - POSTGRES_USER=redpoint
+      # POSTGRES_PASSWORD fallback `redpoint_dev` is a DEV DEFAULT. In any
+      # real deployment, set POSTGRES_PASSWORD via the host environment or
+      # an external secrets store — never rely on the default.
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-redpoint_dev}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U redpoint -d redpoint_ai"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    profiles:
+      - production
+
+volumes:
+  server-data:
+  pg-data:

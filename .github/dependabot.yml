@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # NOTE: Dependabot has limited support for Bun lockfiles (bun.lock / bun.lockb).
+  # Version-update PRs may be partial — not all workspace packages will appear in every PR.
+  # Each PR must be validated manually (built and tested locally) before merging;
+  # there is no CI to catch regressions automatically.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"

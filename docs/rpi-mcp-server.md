@@ -1,0 +1,511 @@
+# MCP RPI Server
+
+A self-contained executable that exposes the RedPoint Interaction (RPI) Integration API as Model Context Protocol tools. The fast path for **agent developers** who already have an MCP client — Claude Desktop, Cursor, langchain, an in-house agent, anything that speaks MCP — and just need a working RPI tool surface to point it at.
+
+Source lives in `packages/mcp-rpi`. 47 tools across 8 domains; ships as a per-platform binary + click-to-run launcher.
+
+## Tool Domains
+
+| Domain | Tools | Description |
+|--------|-------|-------------|
+| **admin** | 3 | System health, cluster API error log, audit history |
+| **audiences** | 13 | List/get/metadata, audience definitions, test-workflow lifecycle + results |
+| **auth** | 1 | Verify RPI connection |
+| **clients** | 3 | List and look up clients (tenant/cluster discovery) |
+| **file-system** | 1 | Resolve a file's name/path by GUID (`get_file_info_by_id`) |
+| **folders** | 2 | List and create folders |
+| **interactions** | 16 | List/get, activity tree, triggers, workflow run + instance control, next-firing times |
+| **selection-rules** | 8 | List/get (Basic + Standard subtypes), count/waterfall/SQL-count runs, document definitions |
+
+## Configuration
+
+Set these environment variables (or in `.env`):
+
+```env
+RPI_INTEGRATION_API_URL=https://rpi.your-company.com
+RPI_OAUTH_CLIENT_ID=
+RPI_OAUTH_CLIENT_SECRET=
+RPI_DEFAULT_CLIENT_ID=
+MCP_HTTP_PORT=3002
+AUTH_REQUIRED=false          # Set to "true" in production
+
+# Optional proxy user (native RPI service account — fallback when no per-user token)
+# RPI_PROXY_USER=your-service-account-username
+# RPI_PROXY_PASS=your-service-account-password
+# RPI_PROXY_ENABLED=false    # Force-disable even if creds are set
+```
+
+> **Note:** `RPI_INTEGRATION_API_URL` is the root URL of your RPI Integration API (no `/api/v2` suffix). The MCP server constructs API and auth paths internally.
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `RPI_INTEGRATION_API_URL` | Yes | Root URL of the RPI Integration API |
+| `RPI_OAUTH_CLIENT_ID` | Yes | OAuth2 client ID for the `/connect/token` password grant |
+| `RPI_OAUTH_CLIENT_SECRET` | Yes | OAuth2 client secret |
+| `RPI_DEFAULT_CLIENT_ID` | Yes | Default value for the `X-ClientID` header (RPI tenant/workspace ID). Used by the MCP server when a tool call omits an explicit `clientId`. |
+| `RPI_PROXY_USER` | No | Native RPI service account username (enables proxy user) |
+| `RPI_PROXY_PASS` | No | Native RPI service account password (enables proxy user) |
+| `RPI_PROXY_ENABLED` | No | `false` force-disables the proxy user (creds ignored). Unset → enabled iff both user and pass are set. |
+| `MCP_HTTP_PORT` | No | HTTP transport port (default: 3002) |
+| `AUTH_REQUIRED` | No | Require Bearer token on `/mcp` (default: true, set "false" for dev) |
+
+## Building Standalone Binaries
+
+The MCP server compiles into a single self-contained binary per platform via Bun's `bun --compile`. No Node.js, no Bun, and no monorepo are required on the machine that runs the result — just the binary, a `.env`, and the OS-native launcher that ships alongside it.
+
+### Prerequisites for the build machine
+
+- Git
+- [Bun](https://bun.sh) 1.x
+
+### Build
+
+```bash
+git clone https://github.com/RedPointGlobal/redpoint-ai.git
+cd redpoint-ai
+bun install                      # one-time; populates node_modules at the repo root
+
+cd packages/mcp-rpi
+bun run build:all                # ~15s — emits per-platform bundles in dist/
+bun run release:zip              # packages each bundle as a per-platform .zip; cleans the bundle subdirs
+```
+
+Single-platform alternatives (faster — write into per-platform subdirs the same way):
+
+| Script | Output |
+|--------|--------|
+| `bun run build:linux`        | `dist/rp-rpi-mcp-linux-x64/rp-rpi-mcp-linux` |
+| `bun run build:windows`      | `dist/rp-rpi-mcp-windows-x64/rp-rpi-mcp-windows.exe` |
+| `bun run build:macos`        | `dist/rp-rpi-mcp-macos-arm64/rp-rpi-mcp-macos-arm64` |
+| `bun run build:macos-intel`  | `dist/rp-rpi-mcp-macos-intel/rp-rpi-mcp-macos-intel` |
+
+### What lands in `dist/`
+
+After `bun run build:all`, `packages/mcp-rpi/dist/` contains four per-platform bundles, each shippable as-is:
+
+```
+dist/
+  ├── rp-rpi-mcp-linux-x64/
+  │   ├── rp-rpi-mcp-linux                              (~97 MB, Linux x64)
+  │   ├── Start MCP Server (Linux).sh                   (chmod 755)
+  │   ├── README.txt
+  │   └── .env.example
+  ├── rp-rpi-mcp-windows-x64/
+  │   ├── rp-rpi-mcp-windows.exe                        (~112 MB, Windows x64)
+  │   ├── Start MCP Server (Windows).bat
+  │   ├── README.txt
+  │   └── .env.example
+  ├── rp-rpi-mcp-macos-arm64/
+  │   ├── rp-rpi-mcp-macos-arm64                        (~60 MB, Apple Silicon)
+  │   ├── Start MCP Server (macOS arm64).command       (chmod 755)
+  │   ├── README.txt
+  │   └── .env.example
+  └── rp-rpi-mcp-macos-intel/
+      ├── rp-rpi-mcp-macos-intel                        (~65 MB, Intel macOS)
+      ├── Start MCP Server (macOS Intel).command       (chmod 755)
+      ├── README.txt
+      └── .env.example
+```
+
+If a root `.env` exists in the repo (dev convenience), it's also copied into each subdir for immediate launch. `release:zip` excludes `.env` from the published zips — only `.env.example` ships.
+
+After `bun run release:zip`, the bundle subdirs are removed and `dist/` holds only the four release artifacts:
+
+```
+dist/
+  ├── rp-rpi-mcp-linux-x64.zip      (~38 MB)
+  ├── rp-rpi-mcp-windows-x64.zip    (~41 MB)
+  ├── rp-rpi-mcp-macos-arm64.zip    (~22 MB)
+  └── rp-rpi-mcp-macos-intel.zip    (~25 MB)
+```
+
+`dist/` is gitignored — rebuilding regenerates it cleanly.
+
+### Run the result
+
+1. Copy `dist/<platform>/.env.example` to `dist/<platform>/.env` and fill in the [environment variables](#environment-variables) above.
+2. Launch the OS-named launcher (each platform's bundle ships its own):
+   - **Windows**: double-click `Start MCP Server (Windows).bat`. The launcher prints a banner, runs the binary, and stays open after exit so you can read any error.
+   - **Linux**: `./Start\ MCP\ Server\ \(Linux\).sh` (or just `./rp-rpi-mcp-linux` directly).
+   - **macOS** (Apple Silicon): `./Start\ MCP\ Server\ \(macOS\ arm64\).command`. **First run**: right-click → Open → "Open" in the Gatekeeper dialog (one-time, the binary is unsigned).
+   - **macOS** (Intel): same flow with the `(macOS Intel).command` variant.
+3. Verify: `curl http://localhost:3002/health` → `{"status":"ok","server":"rpi-mcp-server","transport":"http"}`
+
+### Distributing the bundle
+
+`bun run release:zip` produces the four per-platform zips above — that's the shipping artifact. Upload them to a release page and end users download the one matching their OS:
+
+| Platform              | Release artifact                |
+| --------------------- | ------------------------------- |
+| Windows x64           | `rp-rpi-mcp-windows-x64.zip`    |
+| macOS arm64           | `rp-rpi-mcp-macos-arm64.zip`    |
+| macOS Intel           | `rp-rpi-mcp-macos-intel.zip`    |
+| Linux x64             | `rp-rpi-mcp-linux-x64.zip`      |
+
+Recipient extracts the zip, copies `.env.example` → `.env`, fills in their RPI credentials, then double-clicks the OS-named launcher. The binary keeps its platform suffix (`rp-rpi-mcp-windows.exe`, etc.) so a stray copy is never ambiguous.
+
+Build-host requirements: pure-JS via `adm-zip`, so any host with Bun (Linux, macOS, Windows, WSL) produces identical output. No `zip` (bash) or `Compress-Archive` (PowerShell) dependency.
+
+## Authentication
+
+The MCP server has two layers of authentication: **inbound** (the token a caller presents on `/mcp`) and **outbound** (the token used for RPI API calls). Inbound is mostly a validation problem; outbound is a choice between two methods that the agent developer has to make.
+
+### Outbound to RPI: Choosing an Auth Method
+
+Two options:
+
+| Method | Identity RPI sees | When to use |
+|--------|-------------------|-------------|
+| **Proxy user** (service account) | Always the same shared user | Background jobs, system automation, agents that don't represent a specific human |
+| **Per-user token** (native RPI login) | The end user the agent represents | Interactive agents, anything where RPI's RBAC needs to apply per user |
+
+If both are configured, the per-user token wins on every call — the proxy user is fallback only. With proxy user disabled and no per-user token, the call fails with "Proxy user is not configured".
+
+### Outbound Option A: Proxy User (Service Account)
+
+If configured (`RPI_PROXY_USER`/`RPI_PROXY_PASS`), RPI API calls fall back to a native RPI service account when no per-user token is present. The server obtains a Bearer token via password grant to the RPI `/connect/token` endpoint, caches it with auto-refresh, and uses it for any tool call made without an inbound user token.
+
+The proxy user is implicitly enabled by setting `RPI_PROXY_USER` and `RPI_PROXY_PASS`. Set `RPI_PROXY_ENABLED=false` to force-disable it (credentials are ignored).
+
+### Outbound Option B: Per-User Token (Native RPI Login)
+
+When the agent represents a specific RPI user, log in as that user and forward the resulting Bearer token in the `Authorization` header on every `/mcp` request. The MCP server threads the token through to every RPI API call, so RPI applies that user's permissions.
+
+The full flow is **login → use → refresh → logout**. A runnable end-to-end TypeScript script lives at [`packages/mcp-rpi/examples/agent-auth-flow.ts`](../packages/mcp-rpi/examples/agent-auth-flow.ts); the snippets below match it.
+
+#### Step 1: Acquire a token via /connect/token
+
+Native RPI users authenticate via the OAuth2 password grant. POST `application/x-www-form-urlencoded` to `{RPI_INTEGRATION_API_URL}/connect/token`:
+
+```ts
+const response = await fetch(`${rpiBaseUrl}/connect/token`, {
+  method: "POST",
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({
+    grant_type: "password",
+    username,
+    password,
+    client_id: oauthClientId,
+    client_secret: oauthClientSecret,
+  }),
+});
+const { access_token, expires_in, refresh_token } = await response.json();
+```
+
+`expires_in` is in seconds. `refresh_token` is optional — not all RPI tenants issue one. Store these in memory, not on disk.
+
+#### Step 2: Use the token in MCP tool calls
+
+Pass the access token to the MCP SDK transport via `requestInit.headers`. Every `/mcp` request from this client now carries the `Authorization` header:
+
+```ts
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
+  requestInit: {
+    headers: { Authorization: `Bearer ${access_token}` },
+  },
+});
+const client = new Client({ name: "my-agent", version: "1.0.0" }, { capabilities: {} });
+await client.connect(transport);
+
+const result = await client.callTool({ name: "verify_connection", arguments: {} });
+await client.close();
+```
+
+The token is forwarded by the MCP server's auth middleware into the tool handler's `extra.authInfo.token`, which every RPI-backed tool passes to the API client.
+
+#### Step 3: Refresh the token
+
+If the tenant issued a `refresh_token`, exchange it for a fresh access token without re-prompting for the password:
+
+```ts
+const response = await fetch(`${rpiBaseUrl}/connect/token`, {
+  method: "POST",
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token,
+    client_id: oauthClientId,
+    client_secret: oauthClientSecret,
+  }),
+});
+```
+
+Failure modes: a refresh response of 400 / `invalid_grant` means the refresh token was revoked or expired — fall back to Step 1 with stored credentials, or prompt the user to reauthenticate. If the tenant didn't issue a `refresh_token` in Step 1, skip refresh entirely and re-login when the access token nears expiry.
+
+#### Step 4: Logout
+
+RPI does not expose `/connect/revoke`, so logout is a client-side concern: drop the in-memory access and refresh tokens. The access token will continue to work against RPI until it expires server-side, so keep TTLs short if that matters.
+
+```ts
+state.accessToken = undefined;
+state.refreshToken = undefined;
+```
+
+#### Error handling
+
+- **401 on `/mcp`** → token expired or invalid. Refresh, or re-login if refresh fails.
+- **401 from a tool result body** → the user lacks permission for that operation in RPI; the auth itself is fine.
+- **"Proxy user is not configured"** → no inbound token *and* the proxy user is disabled. Either start sending a user token or set `RPI_PROXY_ENABLED=true` with valid creds.
+- **Dev mode (`AUTH_REQUIRED=false`)** → inbound tokens are accepted but not validated, and any token (or none) is forwarded as-is. Useful for local development; do not deploy this way.
+
+### Inbound: Token Validation on /mcp
+
+When `AUTH_REQUIRED=true`, the MCP server requires an `Authorization: Bearer <token>` header on all `/mcp` requests. Token validation uses a two-tier approach:
+
+1. **OIDC/JWKS verification (fast path)** — At startup, the server calls `getLoginSettings()` to auto-detect if an OpenID provider is configured. If found, it fetches the OIDC discovery document and creates a JWKS verifier using `jose`. JWT-shaped tokens are verified locally (fast crypto, no network call).
+
+2. **RPI validateTokenStatus (universal fallback)** — If JWKS verification fails or is unavailable, the token is validated against RPI's `GET /api/v2/authentication/validate-token-status` endpoint. This works for all token types:
+   - **Native** RPI credentials
+   - **OIDC** (Keycloak) tokens
+   - **Microsoft** authentication tokens
+
+The `/health` endpoint remains unauthenticated.
+
+In dev mode (`AUTH_REQUIRED=false`), no token is required.
+
+### verify_connection Tool
+
+The `verify_connection` tool is a diagnostic that tests:
+- Whether the caller's token is present
+- Whether OIDC auto-detection succeeded (shows issuer, JWKS URI)
+- Whether the proxy user token is valid
+- Available login settings on the RPI instance
+- A test API call using the caller's token (or proxy fallback)
+
+## RPI Client ID / `X-ClientID` Header
+
+Every call the MCP server makes to the RPI Integration API includes an `X-ClientID: <rpi-tenant-id>` header identifying the RPI tenant/workspace the operation targets. RPI itself calls this a "client" — distinct from OAuth2's client credentials.
+
+The value is resolved per tool call:
+
+1. If the tool invocation includes a `clientId` argument, that value is used.
+2. Otherwise, the MCP server falls back to `RPI_DEFAULT_CLIENT_ID` from its environment.
+3. If neither is set, the call throws a clear error.
+
+Every RPI-backed tool exposes an optional `clientId` input in its `inputSchema`. The description says it's normally injected by the agent; standalone clients (Claude Desktop, curl) can rely on the server default.
+
+**RedpointAI agent integration:** `apps/server/src/mcp/client.ts` holds a `currentClientId` seeded from `RPI_DEFAULT_CLIENT_ID` at startup. The per-tool `execute` wrapper injects `{ clientId: currentClientId }` into every call, overriding anything the LLM may have set. A setter (`setCurrentClientId`) is exposed for a future user-facing client switcher.
+
+## Tool Filtering
+
+The server supports narrowing the response to `tools/list` via two optional params. Useful for external MCP clients (Claude Desktop, Cursor, direct SDK) and for RedpointAI workspaces that don't use skills — without filtering, a client gets all 47 tools on every request.
+
+### Wire format
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/list",
+  "params": {
+    "category": "audiences,interactions",
+    "names": ["list_audiences"]
+  }
+}
+```
+
+- **`category`** — comma-separated string or array of category names. The tool's stamped `_meta.category` must match one of them.
+- **`names`** — array of unqualified tool names (no `serverName__` prefix).
+- Both present → intersection (tool must satisfy both).
+- Neither present → all tools returned (backward compatible).
+
+### Available categories
+
+`admin`, `audiences`, `auth`, `clients`, `file-system`, `folders`, `interactions`, `selection-rules`.
+
+### Capability advertisement
+
+On `initialize`, the server advertises:
+
+```json
+{
+  "capabilities": {
+    "tools": {
+      "listChanged": true,
+      "supportsFiltering": true,
+      "categories": ["admin", "audiences", "auth", "clients", "file-system", "folders", "interactions", "selection-rules"]
+    }
+  }
+}
+```
+
+### RedpointAI integration
+
+When an MCP connection in a workspace config has `allowedTools` set, the RedpointAI MCP client automatically passes it as `names` to `tools/list`. This trims wire traffic AND the eventual context window, regardless of whether the workspace uses skills.
+
+## Response Filtering
+
+RPI Integration API responses include verbose metadata fields that inflate token usage for no LLM benefit. The MCP server strips these fields from every tool response by default:
+
+- `$jsonType`, `$jsonTypeID` — internal type discriminators
+- `data` — typically a duplicate of the top-level resource after writes
+- `fileInfo` — creation/modification metadata
+- Under `$metadata`, everything except `validationIssues` (which carries actionable error info)
+
+Observed savings on typical RPI responses are 50–75% on the JSON payload.
+
+### Opt-out
+
+Every tool that returns RPI data accepts an optional `verbose` boolean in its `inputSchema` (default `false`). When `verbose=true` the raw RPI response is returned unchanged — use this when you need the full resource for debugging or when an RPI field you care about was incorrectly stripped.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_system_health_availability",
+    "arguments": { "verbose": true }
+  }
+}
+```
+
+The `verbose` flag flows through `RPIApiClient.get/post/put` into the shared `filterResponse()` helper in `packages/mcp-rpi/src/client/response-filter.ts`. Currently wired through every tool in the `admin` category as the pilot; additional domains can opt in by threading `verbose` through their input schema and passing it as the final argument to the API client call.
+
+## OpenAPI Type Generation
+
+The MCP server generates TypeScript interfaces from the RPI Integration API's OpenAPI spec using `openapi-typescript`. This provides compile-time type safety for all API responses and request bodies.
+
+### Setup
+
+Set `RPI_OPENAPI_SPEC` in the root `.env` file to a URL or local file path:
+
+```env
+# From the RPI Swagger endpoint
+RPI_OPENAPI_SPEC=https://<your-rpi-instance>/swagger/v1/swagger.json
+
+# Or from a local OpenAPI spec file
+RPI_OPENAPI_SPEC=/path/to/openapi.yaml
+```
+
+### Generate Types
+
+```bash
+# From the repo root
+bun run generate:types:rpi
+
+# Or from within packages/mcp-rpi/
+bun run generate:types
+```
+
+This produces `packages/mcp-rpi/src/client/rpi-api.generated.ts` containing ~907 schema interfaces and path types from the spec.
+
+### Behavior
+
+| Condition | Result |
+|-----------|--------|
+| `RPI_OPENAPI_SPEC` is set | Generates types from the specified source |
+| `RPI_OPENAPI_SPEC` is unset, generated file exists | Skips with a warning (dev work continues) |
+| `RPI_OPENAPI_SPEC` is unset, no generated file | Errors with setup instructions |
+
+### Checking for Staleness (pre-PR)
+
+```bash
+bun run generate:types:check
+```
+
+Generates to a temp file and diffs against the existing output. Exits non-zero if they don't match.
+
+### Using Generated Types in Tools
+
+Tool files import schema types from `packages/mcp-rpi/src/client/rpi-types.ts`:
+
+```typescript
+import type { components } from "../client/rpi-types.js";
+
+type AudienceSearchResults = components["schemas"]["IAudienceBaseJsonResponseMessageSearchResultsJsonResponseMessage"];
+const audiences = await rpiClient.get<AudienceSearchResults>("/audiences", params);
+```
+
+Tool paths (e.g. `/audiences`) are simplified aliases that don't match the full OpenAPI spec paths (e.g. `/api/v2/client/files/audience`), so tools use schema-level types (`components["schemas"]`) rather than path-level type inference.
+
+### Important Notes
+
+- The generated file is **gitignored** — each developer must generate it locally after cloning
+- The `RPIApiClient` methods default to `unknown` return types — tools must provide an explicit type parameter
+- Helper types (`GetResponse`, `PostResponse`, `PostBody`, etc.) are available in `rpi-types.ts` for endpoints where paths align with the spec
+
+## Transports
+
+The server supports two transports simultaneously:
+
+### stdio (for Claude Desktop / local clients)
+
+```bash
+bun run packages/mcp-rpi/src/index.ts
+```
+
+### HTTP (for production / RedpointAI backend)
+
+```bash
+bun run dev:mcp  # starts on MCP_HTTP_PORT (default 3002)
+```
+
+The HTTP transport exposes the MCP protocol at `http://localhost:3002/mcp`.
+
+## Claude Desktop Configuration
+
+Add to your Claude Desktop `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "rpi": {
+      "command": "bun",
+      "args": ["run", "/path/to/redpoint-ai/packages/mcp-rpi/src/index.ts"],
+      "env": {
+        "RPI_INTEGRATION_API_URL": "https://rpi.your-company.com",
+        "RPI_OAUTH_CLIENT_ID": "your-oauth-client-id",
+        "RPI_OAUTH_CLIENT_SECRET": "your-oauth-client-secret",
+        "RPI_DEFAULT_CLIENT_ID": "your-rpi-tenant-id",
+        "RPI_PROXY_USER": "your-service-account",
+        "RPI_PROXY_PASS": "your-password"
+      }
+    }
+  }
+}
+```
+
+## Using with RedpointAI
+
+In a workspace config, add an MCP connection pointing to the HTTP transport:
+
+```json
+{
+  "mcp": [
+    {
+      "name": "rpi",
+      "transport": "http",
+      "url": "http://localhost:3002/mcp"
+    }
+  ]
+}
+```
+
+When combined with skills, MCP tools are filtered per-skill via `mcpToolFilter` in the SKILL.md frontmatter, so each sub-agent only sees the tools relevant to its domain.
+
+## Docker
+
+The MCP server runs as a separate container in docker-compose:
+
+```yaml
+mcp-rpi:
+  build:
+    context: .
+    dockerfile: packages/mcp-rpi/Dockerfile
+  ports:
+    - "3002:3002"
+  environment:
+    - MCP_HTTP_PORT=3002
+    - RPI_INTEGRATION_API_URL=${RPI_INTEGRATION_API_URL}
+    - RPI_OAUTH_CLIENT_ID=${RPI_OAUTH_CLIENT_ID}
+    - RPI_OAUTH_CLIENT_SECRET=${RPI_OAUTH_CLIENT_SECRET}
+    - RPI_DEFAULT_CLIENT_ID=${RPI_DEFAULT_CLIENT_ID}
+    - RPI_PROXY_USER=${RPI_PROXY_USER:-}
+    - RPI_PROXY_PASS=${RPI_PROXY_PASS:-}
+    - RPI_PROXY_ENABLED=${RPI_PROXY_ENABLED:-}
+    - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
+```
