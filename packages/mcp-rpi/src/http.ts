@@ -201,7 +201,7 @@ if (setup.degraded) {
   });
 }
 
-const port = Number(process.env.MCP_HTTP_PORT) || 3002;
+const port = Number(process.env.RPI_MCP_HTTP_PORT) || 3002;
 
 // IMPORTANT: use console.error, never console.log (breaks stdio protocol in other contexts)
 console.error(`RPI MCP Server (HTTP) starting on port ${port}`);

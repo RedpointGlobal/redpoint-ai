@@ -1,0 +1,44 @@
+{
+  "name": "@redpoint-ai/mcp-drh",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Redpoint",
+  "description": "Data Readiness Hub (OP-Services) MCP server \u2014 the Data Readiness Hub tool surface (Keycloak-signon auth, incoming-auth middleware, server-side X-ClientId + databaseId scoping). Sibling to mcp-rpi.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RedpointGlobal/redpoint-ai.git",
+    "directory": "packages/mcp-drh"
+  },
+  "private": true,
+  "main": "./src/server.ts",
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "scripts": {
+    "dev": "bun --hot run src/http.ts",
+    "start:http": "bun run src/http.ts",
+    "build:linux": "bun build --compile --target=bun-linux-x64 src/http.ts --outfile dist/rp-drh-mcp-linux-x64/rp-drh-mcp-linux",
+    "test": "bun test",
+    "test:integration": "bun test src/__tests__/integration",
+    "generate:types": "bun run scripts/generate-types.ts",
+    "generate:types:check": "bun run scripts/generate-types.ts --check",
+    "build": "bun run build:linux",
+    "build:windows": "bun build --compile --target=bun-windows-x64 src/http.ts --outfile dist/rp-drh-mcp-windows-x64/rp-drh-mcp-windows.exe",
+    "//disabled:build:macos": "DISABLED \u2014 not in the release set (build:all = linux + windows only). Rename key back to build:macos to re-enable. bun build --compile --target=bun-darwin-arm64 src/http.ts --outfile dist/rp-drh-mcp-macos-arm64/rp-drh-mcp-macos-arm64",
+    "//disabled:build:macos-intel": "DISABLED \u2014 not in the release set. Rename key back to build:macos-intel to re-enable. bun build --compile --target=bun-darwin-x64 src/http.ts --outfile dist/rp-drh-mcp-macos-intel/rp-drh-mcp-macos-intel",
+    "build:all": "bun run build:linux && bun run build:windows && bun run build:copy-templates",
+    "build:copy-templates": "bun run scripts/copy-dist-templates.ts",
+    "release:zip": "bun run scripts/release-zip.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "hono": "4.12.25",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.12",
+    "openapi-typescript": "7.13.0",
+    "adm-zip": "0.5.16"
+  }
+}

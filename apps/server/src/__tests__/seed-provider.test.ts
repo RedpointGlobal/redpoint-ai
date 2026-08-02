@@ -17,6 +17,12 @@ const KEYS = [
   "AZURE_OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
+  // Model/deployment overrides — saved and cleared too, so a value in the
+  // developer's real .env can't leak in and make these assertions lie.
+  "AZURE_OPENAI_DEPLOYMENT_ID",
+  "AZURE_OPENAI_MODEL",
+  "ANTHROPIC_MODEL",
+  "OPENAI_MODEL",
 ] as const;
 
 describe("pickDefaultProvider — key-presence-adaptive seed (audit #6)", () => {
@@ -35,6 +41,45 @@ describe("pickDefaultProvider — key-presence-adaptive seed (audit #6)", () => 
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
     }
+  });
+
+  it("honours AZURE_OPENAI_DEPLOYMENT_ID for the deployment and model", () => {
+    // The variable ships in .env, in the bundle .env and in docker-compose, but
+    // nothing read it at runtime — an operator repointed it, restarted, and
+    // nothing changed because the model lived in the workspace row. With the
+    // settings UI gone the environment is the only way to choose a model.
+    process.env.AZURE_OPENAI_API_KEY = "k";
+    process.env.AZURE_OPENAI_DEPLOYMENT_ID = "gpt-5-custom";
+    const p = pickDefaultProvider();
+    expect(p.type).toBe("azure-openai");
+    expect(p.azureDeployment).toBe("gpt-5-custom");
+    expect(p.model).toBe("gpt-5-custom");
+  });
+
+  it("lets an explicit model override win over the deployment id", () => {
+    process.env.AZURE_OPENAI_API_KEY = "k";
+    process.env.AZURE_OPENAI_DEPLOYMENT_ID = "my-deployment";
+    process.env.AZURE_OPENAI_MODEL = "gpt-4.1";
+    const p = pickDefaultProvider();
+    expect(p.azureDeployment).toBe("my-deployment");
+    expect(p.model).toBe("gpt-4.1");
+  });
+
+  it("honours ANTHROPIC_MODEL and OPENAI_MODEL overrides", () => {
+    process.env.ANTHROPIC_API_KEY = "k";
+    process.env.ANTHROPIC_MODEL = "claude-custom";
+    expect(pickDefaultProvider().model).toBe("claude-custom");
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.OPENAI_API_KEY = "k";
+    process.env.OPENAI_MODEL = "gpt-custom";
+    expect(pickDefaultProvider().model).toBe("gpt-custom");
+  });
+
+  it("falls back to the shipped defaults when no override is set", () => {
+    process.env.AZURE_OPENAI_API_KEY = "k";
+    const p = pickDefaultProvider();
+    expect(p.model).toBe("gpt-4.1");
+    expect(p.azureDeployment).toBe("gpt-4.1");
   });
 
   it("picks azure-openai when AZURE_OPENAI_API_KEY is set", () => {

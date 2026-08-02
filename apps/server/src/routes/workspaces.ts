@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { WorkspaceCreateSchema, WorkspaceConfigSchema } from "@redpoint-ai/shared";
+import { WorkspaceCreateSchema, WorkspaceConfigSchema, WORKSPACE_NAMES } from "@redpoint-ai/shared";
 import { db } from "../store/db.js";
 import { workspaces } from "../store/schema.js";
 import { eq } from "drizzle-orm";
@@ -31,7 +31,26 @@ const runtimeStatusCache = new Map<string, CachedRuntimeStatus>();
 
 workspaceRoutes.get("/", async (c) => {
   const result = await db.select().from(workspaces);
-  return c.json(result);
+  // DRH is an optional module — its card tracks provisioning. When DRH_API_URL
+  // (the sentinel: first in the DRH MCP server's missing-vars check) is unset,
+  // the Data Readiness Hub workspace is filtered from this list so its card does
+  // not render. "Not provisioned" is honest absence, not a diagnostic state, and
+  // ~all OSS users are RPI-only — no dead card. Partial config (DRH_API_URL set,
+  // other DRH vars missing) still lists the card, which then shows the same
+  // not_configured/missingVar treatment RPI gets via runtime-status.
+  //
+  // READ-PATH ONLY. The row and its threads are never touched, and GET /:id (+
+  // /:id/chat, /:id/runtime-status) still resolve it, so a bookmarked chat stays
+  // reachable and the card returns intact when keys return. This filter MUST NOT
+  // be mirrored into the seed or enforceCanonicalWorkspaces: gating those on
+  // DRH_API_URL is the historical data-loss bug (a missing/typo'd/transient var
+  // deleting the workspace + reparenting conversations — see store/seed.ts).
+  const filtered = process.env.DRH_API_URL
+    ? result
+    : result.filter(
+        (w: typeof workspaces.$inferSelect) => w.name !== WORKSPACE_NAMES.drh,
+      );
+  return c.json(filtered);
 });
 
 workspaceRoutes.get("/:id", async (c) => {
@@ -58,9 +77,29 @@ workspaceRoutes.get("/:id/tools", async (c) => {
   }
   const config = configResult.data;
 
-  const tools = config.mcp?.length
-    ? await mcpManager.getToolsForWorkspace(id, config.mcp)
-    : {};
+  // Unreachable MCP server: report it as an explicit, machine-readable state
+  // rather than a 500 — this endpoint backs the Tools tab, which is one of the
+  // surfaces a user opens precisely to find out why tools are missing.
+  let tools: Awaited<ReturnType<typeof mcpManager.getToolsForWorkspace>> = {};
+  try {
+    if (config.mcp?.length) {
+      // Bounded like the runtime-status probe below: an unreachable server
+      // stalls rather than throwing, so without a fuse this endpoint hangs.
+      tools = await Promise.race([
+        mcpManager.getToolsForWorkspace(id, config.mcp),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("tool load timed out after 10s — server may be down")),
+            10_000,
+          ),
+        ),
+      ]);
+    }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`[workspaces] tools unavailable for ${id}: ${detail}`);
+    return c.json({ error: "mcp_unavailable", detail, tools: [] }, 503);
+  }
 
   const list = Object.entries(tools).map(([name, tool]) => ({
     name,
@@ -223,6 +262,10 @@ workspaceRoutes.get("/:id/runtime-status", async (c) => {
      *  - "failed": probe got a 401/Unauthorized response from the MCP server
      */
     auth: "none" | "authenticated" | "failed";
+    /** Single most-obstructive condition, for the workspace card. See classify below. */
+    status: "ok" | "not_configured" | "unauthorized" | "unreachable" | "no_tools";
+    /** First missing env var name when status is not_configured (card shows this one). */
+    missingVar?: string;
     error?: string;
   };
   const mcpStatuses: McpStatus[] = [];
@@ -289,6 +332,47 @@ workspaceRoutes.get("/:id/runtime-status", async (c) => {
       auth = "authenticated";
     }
 
+    // Ask the MCP server whether it booted unconfigured — ONLY on the unhappy
+    // path. A probe that succeeded with tools is definitionally fine, so the
+    // healthy path pays nothing. The budget is a 1.5s SLICE, deliberately not a
+    // second full fuse: a dead server would otherwise cost 5s + 5s serially and
+    // double the wait on exactly the case this reports.
+    let missingVar: string | undefined;
+    if ((!connected || toolCount === 0) && conn.url) {
+      try {
+        const healthUrl = conn.url.replace(/\/mcp\/?$/, "/health");
+        const res = await Promise.race([
+          fetch(healthUrl),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("health timeout")), 1_500),
+          ),
+        ]);
+        if (res.ok) {
+          const h = (await res.json()) as { mcp?: string; missing?: string[] };
+          if (h.mcp === "degraded") missingVar = h.missing?.[0];
+        }
+      } catch {
+        // Health unreachable too — leave missingVar unset; the probe result
+        // below already classifies this as unreachable.
+      }
+    }
+
+    // ORDER IS DELIBERATE AND LOOKS INVERTED. You reach a server before you
+    // authenticate to it, so handshake order would suggest unreachable first.
+    // It is the other way round because `unreachable` is the CATCH-ALL for any
+    // probe failure — and a 401 also makes the probe fail. Test the specific
+    // signals before the catch-all or the unauthorized branch becomes dead code.
+    // Do not reorder to "match the handshake"; that silently kills a state.
+    const status: McpStatus["status"] = missingVar
+      ? "not_configured"
+      : auth === "failed"
+        ? "unauthorized"
+        : !connected
+          ? "unreachable"
+          : toolCount === 0
+            ? "no_tools"
+            : "ok";
+
     mcpStatuses.push({
       name: conn.name,
       transport: conn.transport,
@@ -298,6 +382,8 @@ workspaceRoutes.get("/:id/runtime-status", async (c) => {
       toolCount,
       categories,
       auth,
+      status,
+      ...(missingVar ? { missingVar } : {}),
       ...(connError ? { error: connError } : {}),
     });
   }

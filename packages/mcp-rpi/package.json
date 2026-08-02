@@ -4,10 +4,10 @@
   "type": "module",
   "license": "Apache-2.0",
   "author": "Redpoint",
-  "description": "MCP server for RedPoint Interaction (RPI) Integration API",
+  "description": "MCP server for Redpoint Interaction (RPI) Integration API",
   "repository": {
     "type": "git",
-    "url": "https://github.com/RedPointGlobal/redpoint-ai.git",
+    "url": "https://github.com/RedpointGlobal/redpoint-ai.git",
     "directory": "packages/mcp-rpi"
   },
   "publishConfig": {

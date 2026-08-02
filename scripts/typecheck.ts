@@ -22,6 +22,7 @@ const PROJECTS = [
   "packages/shared",
   "packages/skills",
   "packages/mcp-rpi",
+  "packages/mcp-drh",
   "apps/server",
   "apps/web",
 ];

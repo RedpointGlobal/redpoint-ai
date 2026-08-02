@@ -11,7 +11,7 @@ A workspace is an isolated agent environment with its own model configuration, s
   "provider": {
     "type": "anthropic",
     "model": "claude-sonnet-4-6",
-    "apiKey": "sk-ant-...",
+    "apiKey": "${ANTHROPIC_API_KEY}",
     "baseUrl": "https://custom-endpoint.example.com"
   },
   "agent": {
@@ -41,7 +41,7 @@ A workspace is an isolated agent environment with its own model configuration, s
 |-------|------|-------------|
 | `type` | `"openai" \| "anthropic" \| "google" \| "ollama" \| "azure-openai"` | LLM provider |
 | `model` | `string` | Model identifier (e.g., `claude-sonnet-4-6`, `gpt-4o`) |
-| `apiKey` | `string?` | Override the server-level API key |
+| `apiKey` | `string?` | Reference to an env var holding the key, e.g. `${ANTHROPIC_API_KEY}`. Literal secrets are rejected — keys live in `.env` (OSS) or the key vault (hosted), never in the workspace row. |
 | `baseUrl` | `string?` | Custom endpoint URL |
 | `azureDeployment` | `string?` | Azure OpenAI deployment name |
 
@@ -122,19 +122,3 @@ DELETE /api/v1/workspaces/:id
 
 Returns `{ "deleted": true }` on success.
 
-## Templates
-
-Pre-built workspace configs are available in `skills/templates/`:
-
-- `marketing-ops.json` — hybrid marketing operations agent
-- `customer-insights.json` — analytics and segmentation expert
-- `content-manager.json` — content and template management
-- `rpi-admin.json` — system monitoring and administration
-
-Import a template:
-
-```bash
-curl -X POST http://localhost:3000/api/v1/workspaces \
-  -H "Content-Type: application/json" \
-  -d @skills/templates/marketing-ops.json
-```

@@ -301,8 +301,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // handlers in apps/web/app/api/proxy/* read the rotated cookie
       // server-side via @auth/core's Auth(), decode the JWT, and attach the
       // Bearer to upstream apps/server requests. Browser code never sees
-      // the raw token — closes the XSS exfil surface flagged in cousin's
-      // PR 1 review.
+      // the raw token — closes the XSS exfil surface flagged in an earlier
+      // security review.
       if (typeof t.rpiUsername === "string") {
         s.rpi = { username: t.rpiUsername };
       }

@@ -22,7 +22,7 @@ Apply foundation guidance: respect `clientId` where applicable, surface raw erro
 
 1. **No `clientId` provided** (most common — generic requests like "list my audiences") — OMIT the `clientId` argument entirely. The MCP server applies `RPI_DEFAULT_CLIENT_ID` from environment automatically. Do NOT ask the user for a clientId; do NOT refuse to proceed.
 
-2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `e0633f26-9843-4def-b394-6791ac51e6de`) — pass it through unchanged.
+2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890`) — pass it through unchanged.
 
 3. **`clientId` provided as a non-UUID** (almost certainly a tenant *name* the parent agent forgot to resolve) — your sub-agent's tool filter does NOT include name-resolution. Stop and respond with a clear error asking the parent to redispatch via the **rpi-clients** skill to resolve the name to a UUID. Forwarding a name will fail with a 401 / "Client ID '00000000-0000-0000-0000-000000000000' not found" because RPI parses non-UUID input to the empty UUID.
 

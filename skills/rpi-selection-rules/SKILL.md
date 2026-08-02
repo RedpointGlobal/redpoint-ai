@@ -40,7 +40,7 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 
 1. **No `clientId` provided** (most common — generic requests like "list my selection rules") — OMIT the `clientId` argument entirely. The MCP server applies `RPI_DEFAULT_CLIENT_ID` from environment automatically. Do NOT ask the user for a clientId; do NOT refuse to proceed.
 
-2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `e0633f26-9843-4def-b394-6791ac51e6de`) — pass it through unchanged.
+2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890`) — pass it through unchanged.
 
 3. **`clientId` provided as a non-UUID** (almost certainly a tenant *name* the parent agent forgot to resolve) — your sub-agent's tool filter does NOT include name-resolution. Stop and respond with a clear error asking the parent to redispatch via the **rpi-clients** skill to resolve the name to a UUID. Forwarding a name will fail with a 401 / "Client ID '00000000-0000-0000-0000-000000000000' not found" because RPI parses non-UUID input to the empty UUID.
 
@@ -88,7 +88,7 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 
 ### "How many records would this rule return?"
 1. Resolve rule `id` (steps 1–2 above; you don't need the full detail, just the ID).
-2. `run_selection_rule_count` with the `id`. Tool blocks on a default 5-minute timeout, polling internally.
+2. `run_selection_rule_count` with the `id`. Tool blocks on a default 220-second timeout, polling internally.
 3. Surface the count.
 
 If the count tool times out, the rule may be against a slow data source — surface the timeout and suggest the user increase `timeoutSeconds` (range 5–3600) or split the rule.
@@ -151,7 +151,7 @@ The general principle: ask *"is the user pointing at a record's name, or naming 
 
 ## Job timeouts
 
-Both `run_selection_rule_count` and `run_selection_rule_waterfall` accept `timeoutSeconds` in the range 5–3600 (default 300 = 5 min). Bump it if the user has a slow data source or huge tables. The polling cadence is 1 second.
+Both `run_selection_rule_count` and `run_selection_rule_waterfall` accept `timeoutSeconds` in the range 5–3600 (default 220). The MCP transport aborts at ~240s, so raising it past that cannot buy more time — the call dies mid-flight instead of returning a clean timeout. The polling cadence is 1 second.
 
 ## Response discipline — applying user-supplied predicates
 

@@ -14,6 +14,10 @@ bun run dev:web                # Next.js frontend only (port 3001)
 bun run dev:mcp                # MCP server only (port 3002)
 bunx drizzle-kit push          # manually push schema changes (lazy-bootstrap auto-runs it on first server start)
 bun run test                   # run all tests (canonical — uses --filter '*' to isolate per-package)
+                               # NOTE: does NOT reach tests/integration/ — routing/accuracy is a
+                               # separate suite (bun run test:accuracy-evaluation). A green run here
+                               # says nothing about routing; the eval sat broken for a whole release
+                               # stretch without this suite noticing.
 bun run test:server            # server tests (runs with AUTH_REQUIRED=false)
 bun run test:skills            # skills package tests
 bun run test:shared            # shared package tests

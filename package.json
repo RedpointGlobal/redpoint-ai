@@ -8,8 +8,13 @@
     "node": ">=22.6.0"
   },
   "workspaces": ["apps/*", "packages/*"],
+  "//overrides": "shell-quote forced above the GHSA-w7jw-789q-3m8p / GHSA-395f-4hp3-45gv line (vuln <=1.8.3). Transitive via drizzle-kit dev tooling; no runtime path, but pinned repo-wide to keep bun audit at 0 critical.",
+  "overrides": {
+    "shell-quote": "1.10.0"
+  },
   "scripts": {
     "build": "bun run --filter '*' build",
+    "build:bundle": "bun run scripts/build-docker-bundle.ts",
     "check": "bun run scripts/check.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/server/dist apps/web/.next apps/web/out .playwright-cli",
     "clean:install": "bun run clean && bun install",
@@ -21,6 +26,8 @@
     "dev:server": "bun run --filter '@redpoint-ai/server' dev",
     "dev:web": "bun run --filter '@redpoint-ai/web' dev",
     "generate:types:rpi": "bun run --filter '@redpoint-ai/mcp-rpi' generate:types",
+    "generate:types:drh": "bun run --filter '@redpoint-ai/mcp-drh' generate:types",
+    "generate:types:drh:check": "bun run --filter '@redpoint-ai/mcp-drh' generate:types:check",
     "licenses": "bun run scripts/generate-third-party-licenses.ts",
     "licenses:check": "bun run scripts/generate-third-party-licenses.ts --check",
     "setup-docker": "bun run scripts/setup-docker.ts",
@@ -36,6 +43,13 @@
     "@ai-sdk/openai": "3.0.58",
     "ai": "6.0.174",
     "better-sqlite3": "12.9.0"
+  },
+  "devDependencies": {
+    "adm-zip": "0.5.16",
+    "@types/adm-zip": "0.5.7",
+    "archiver": "7.0.1",
+    "@types/archiver": "6.0.3",
+    "typescript": "5.9.3"
   },
   "trustedDependencies": ["better-sqlite3"]
 }

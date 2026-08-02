@@ -32,6 +32,17 @@ import type { TelemetryEvent } from "@redpoint-ai/shared";
 // Re-exported for back-compat with existing importers (e.g., A2A server).
 export { getSkillRegistry };
 
+/**
+ * Ceiling on loading a workspace's MCP tools before we give up and degrade.
+ *
+ * Mirrors the runtime-status probe fuse. The MCP transport's own timeout is far
+ * longer, so an unreachable server does not throw — it stalls, and a chat
+ * request with no fuse simply never returns. 10s is generous for a handshake
+ * plus tools/list on a live server and short enough that a dead one produces an
+ * error the user can act on.
+ */
+const MCP_TOOL_LOAD_TIMEOUT_MS = 10_000;
+
 export const chatRoutes = new Hono();
 
 /**
@@ -78,10 +89,59 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
   // getToolsForWorkspace() before threading it down to the transport.
   const userRpiToken = c.req.header("x-rpi-token") ?? undefined;
 
-  // Load MCP tools if workspace has MCP connections configured
-  const mcpTools: Record<string, Tool> = config.mcp?.length
-    ? await mcpManager.getToolsForWorkspace(workspaceId, config.mcp, userRpiToken)
-    : {};
+  // Load MCP tools if workspace has MCP connections configured.
+  //
+  // An unreachable MCP server used to throw straight out of the route as a 500.
+  // Degrade instead — but SURFACE it, never swallow it: continuing silently with
+  // an empty tool map produces an agent that looks healthy and answers without
+  // the tools it claims, which is the exact silent degradation this endpoint has
+  // already been bitten by. Loud-but-wrong beats quiet-and-wrong.
+  let mcpTools: Record<string, Tool> = {};
+  let mcpFailure: string | null = null;
+  if (config.mcp?.length) {
+    try {
+      // Bounded, like the runtime-status probe. An unreachable MCP server does
+      // not fail fast — the transport waits out its own long default — so
+      // without a fuse the request HANGS rather than erroring, and the user
+      // gets an endless spinner instead of an answer. Measured at >90s against
+      // a stopped container before this fuse existed.
+      mcpTools = await Promise.race([
+        mcpManager.getToolsForWorkspace(workspaceId, config.mcp, userRpiToken),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `tool load timed out after ${MCP_TOOL_LOAD_TIMEOUT_MS / 1000}s — server may be down`,
+                ),
+              ),
+            MCP_TOOL_LOAD_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+    } catch (err) {
+      mcpFailure = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[chat] MCP tools unavailable for workspace ${workspaceId}: ${mcpFailure}`,
+      );
+    }
+  }
+
+  // Tools were configured but none could be loaded — tell the user plainly
+  // rather than answering as a tool-less agent pretending to be whole.
+  if (mcpFailure !== null) {
+    const names = (config.mcp ?? []).map((m) => m.name).join(", ");
+    return c.json(
+      {
+        error: "mcp_unavailable",
+        message:
+          `The tool server${names ? ` (${names})` : ""} for this workspace is not reachable, ` +
+          `so its tools are unavailable. Check that the MCP server is running and configured, ` +
+          `then try again.`,
+      },
+      503,
+    );
+  }
 
   // Build tools map for the router agent
   const tools: Record<string, Tool> = {};

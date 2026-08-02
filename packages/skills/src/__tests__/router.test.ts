@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, mock } from "bun:test";
 import type { Skill } from "../skill.js";
 import { isDispatchable, isInlinedExpert } from "../skill.js";
 import { SkillRegistry } from "../registry.js";
+import { GROUNDING_PREAMBLE } from "../grounding-preamble.js";
 
 // ---------------------------------------------------------------------------
 // Mock the "ai" module so generateText never hits a real provider.
@@ -108,6 +109,37 @@ describe("createSkillRouterTool", () => {
     );
 
     expect(getToolsForSkill).not.toHaveBeenCalled();
+  });
+
+  // Phase 2 assembly pins — the shared grounding contract must actually reach
+  // the dispatched expert's sub-agent, and must NOT be prepended for action
+  // skills. This is the durable home for "GROUNDING_PREAMBLE is wired in."
+  it("prepends GROUNDING_PREAMBLE to a dispatched expert's system prompt, curated body after", async () => {
+    const tool = createSkillRouterTool(registry, fakeModel, getToolsForSkill);
+    await tool.execute!(
+      { skillName: "market-research", input: "Tell me about trends" },
+      { toolCallId: "g1", messages: [], abortSignal: undefined as any },
+    );
+    const system = (mockGenerateText.mock.calls[0]![0] as { system: string })
+      .system;
+    expect(system).toContain(GROUNDING_PREAMBLE);
+    expect(system).toContain(expertSkill.instructions);
+    // Contract first, curated body after.
+    expect(system.indexOf(GROUNDING_PREAMBLE)).toBeLessThan(
+      system.indexOf(expertSkill.instructions),
+    );
+  });
+
+  it("does NOT prepend the grounding preamble for action skills (own instructions unchanged)", async () => {
+    const tool = createSkillRouterTool(registry, fakeModel, getToolsForSkill);
+    await tool.execute!(
+      { skillName: "send-email", input: "Send a message" },
+      { toolCallId: "g2", messages: [], abortSignal: undefined as any },
+    );
+    const system = (mockGenerateText.mock.calls[0]![0] as { system: string })
+      .system;
+    expect(system).toBe(actionSkill.instructions);
+    expect(system).not.toContain(GROUNDING_PREAMBLE);
   });
 
   it("calls getToolsForSkill with correct filter for action skills", async () => {

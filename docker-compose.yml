@@ -23,6 +23,12 @@ services:
       # (localhost:3002) so the seeded workspace points at the mcp-rpi service
       # name on the compose network. Read by apps/server/src/store/seed.ts.
       - SEED_RPI_MCP_URL=http://mcp-rpi:3002/mcp
+      # Same for the DRH MCP URL. Without it the seed falls back to
+      # localhost:3003, which inside the server container is the server's OWN
+      # loopback — so the Data Readiness Hub workspace could never connect here
+      # even when DRH is fully configured. The bundle compose has always set it.
+      - DRH_MCP_URL=http://mcp-drh:3003/mcp
+      - DRH_API_URL=${DRH_API_URL:-}
       - A2A_ENABLED=${A2A_ENABLED:-false}
       - A2A_WORKSPACE_ID=${A2A_WORKSPACE_ID:-}
       - A2A_BEARER_TOKEN=${A2A_BEARER_TOKEN:-}
@@ -91,7 +97,7 @@ services:
     ports:
       - "3002:3002"
     environment:
-      - MCP_HTTP_PORT=3002
+      - RPI_MCP_HTTP_PORT=3002
       # AUTH_REQUIRED=false matches the server service — both auth layers off
       # together for the dev compose path. Set both to true (and configure
       # AUTH_SECRET / OIDC) for any non-dev deployment.
@@ -105,6 +111,38 @@ services:
       - RPI_PROXY_ENABLED=${RPI_PROXY_ENABLED:-}
     healthcheck:
       test: ["CMD", "bun", "--eval", "fetch('http://localhost:3002/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+
+  # DR Hub MCP server — sibling to mcp-rpi. DRH config comes from the single root
+  # .env (the same file feeds all services), mirroring mcp-rpi's ${VAR} block.
+  # Without DRH creds the container boots degraded (health up, no tools). At
+  # hosting, inject per-service via Key Vault (auth-ON isolation returns there).
+  mcp-drh:
+    build:
+      context: .
+      dockerfile: packages/mcp-drh/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      - DRH_MCP_HTTP_PORT=3003
+      # AUTH_REQUIRED=false matches server + mcp-rpi for the dev/rep compose path
+      # (DRH HOW layer is read-only). Auth-ON isolation returns at hosting (Key Vault).
+      - AUTH_REQUIRED=false
+      # DRH config from the single root .env (the same file feeds all services).
+      - DRH_API_URL=${DRH_API_URL:-}
+      - DRH_DEFAULT_CLIENT_ID=${DRH_DEFAULT_CLIENT_ID:-}
+      - DRH_DEFAULT_DATABASE_ID=${DRH_DEFAULT_DATABASE_ID:-}
+      - DRH_PROXY_USER=${DRH_PROXY_USER:-}
+      - DRH_PROXY_PASS=${DRH_PROXY_PASS:-}
+      - DRH_PROXY_ENABLED=${DRH_PROXY_ENABLED:-}
+      - DRH_TOKEN_TTL_SECONDS=${DRH_TOKEN_TTL_SECONDS:-}
+      - DRH_CORS_ORIGINS=${DRH_CORS_ORIGINS:-}
+    healthcheck:
+      test: ["CMD", "bun", "--eval", "fetch('http://localhost:3003/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 3s
       retries: 3

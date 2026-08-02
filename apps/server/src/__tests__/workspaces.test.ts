@@ -5,11 +5,12 @@
  * in-memory SQLite/Drizzle instance so tests are fully isolated from the
  * filesystem database and from each other.
  */
-import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "bun:test";
 import { mock } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { sql } from "drizzle-orm";
+import { WORKSPACE_NAMES } from "@redpoint-ai/shared";
 import * as schema from "../store/schema.js";
 
 // ---------------------------------------------------------------------------
@@ -59,10 +60,11 @@ function url(path: string) {
   return `${BASE}${path}`;
 }
 
+// No literal apiKey: secrets live in the environment (.env for OSS, key vault
+// when hosted), and the schema now rejects one stored on the workspace row.
 const validProviderPayload = {
   type: "anthropic",
   model: "claude-opus-4-5",
-  apiKey: "sk-ant-test-key",
 };
 
 async function createWorkspace(name = "Test Workspace") {
@@ -113,6 +115,102 @@ describe("GET /workspaces", () => {
     const names = body.map((w: { name: string }) => w.name);
     expect(names).toContain("Workspace Alpha");
     expect(names).toContain("Workspace Beta");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DRH card gating on DRH_API_URL (read-path list filter).
+//
+// The Data Readiness Hub is an optional module: its card tracks provisioning.
+// When DRH_API_URL is unset the DRH workspace is filtered from GET /workspaces
+// so the card doesn't render. This is a READ-PATH filter only — the row and its
+// threads survive and GET /:id still resolves, so a bookmarked chat stays
+// reachable and the card returns intact when keys return. Gating the SEED /
+// enforceCanonicalWorkspaces on DRH_API_URL is the historical data-loss bug and
+// is guarded separately in seed-migration.test.ts; those stay unconditional.
+// ---------------------------------------------------------------------------
+
+describe("GET /workspaces — DRH card gating on DRH_API_URL", () => {
+  const savedDrhUrl = process.env.DRH_API_URL;
+
+  beforeAll(() => {
+    testDb.run(sql`
+      CREATE TABLE IF NOT EXISTS threads (
+        id          TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        title       TEXT,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
+      )
+    `);
+  });
+
+  afterEach(() => {
+    sqlite.run("DELETE FROM threads");
+    // Restore the ambient value so other suites aren't affected.
+    if (savedDrhUrl === undefined) delete process.env.DRH_API_URL;
+    else process.env.DRH_API_URL = savedDrhUrl;
+  });
+
+  // Seed the DRH workspace + an always-rendered RPI workspace + one DRH thread,
+  // so "row + threads survive" is a real assertion, not a structural inference.
+  async function seedBothPlusDrhThread(): Promise<string> {
+    const drh = await (await createWorkspace(WORKSPACE_NAMES.drh)).json();
+    await createWorkspace(WORKSPACE_NAMES.rpi);
+    const now = Date.now();
+    sqlite.run(
+      "INSERT INTO threads (id, workspace_id, title, created_at, updated_at) VALUES (?,?,?,?,?)",
+      ["drh-thread-1", drh.id, "DRH chat", now, now],
+    );
+    return drh.id as string;
+  }
+
+  it("DRH_API_URL set → Data Readiness Hub is listed alongside RPI", async () => {
+    process.env.DRH_API_URL = "https://drh.test.invalid";
+    await seedBothPlusDrhThread();
+
+    const body = await (await app.request(url("/workspaces"))).json();
+    const names = body.map((w: { name: string }) => w.name);
+    expect(names).toContain(WORKSPACE_NAMES.drh);
+    expect(names).toContain(WORKSPACE_NAMES.rpi);
+  });
+
+  it("DRH_API_URL unset → card filtered from the list, but row + thread survive and /:id resolves", async () => {
+    // Empty string is falsy, matching the route's `process.env.DRH_API_URL` check.
+    process.env.DRH_API_URL = "";
+    const drhId = await seedBothPlusDrhThread();
+
+    // Card gone from the landing list; RPI always renders.
+    const body = await (await app.request(url("/workspaces"))).json();
+    const names = body.map((w: { name: string }) => w.name);
+    expect(names).not.toContain(WORKSPACE_NAMES.drh);
+    expect(names).toContain(WORKSPACE_NAMES.rpi);
+
+    // Row survives — GET /:id still resolves (deep link / history reachable).
+    const byId = await app.request(url(`/workspaces/${drhId}`));
+    expect(byId.status).toBe(200);
+    expect((await byId.json()).name).toBe(WORKSPACE_NAMES.drh);
+
+    // Threads survive — a read filter never touches data.
+    const row = sqlite
+      .query("SELECT COUNT(*) AS count FROM threads WHERE workspace_id = ?")
+      .get(drhId) as { count: number };
+    expect(row.count).toBe(1);
+  });
+
+  it("keys return → card returns intact (dynamic, no stale state)", async () => {
+    process.env.DRH_API_URL = "";
+    await seedBothPlusDrhThread();
+    let names = (await (await app.request(url("/workspaces"))).json()).map(
+      (w: { name: string }) => w.name,
+    );
+    expect(names).not.toContain(WORKSPACE_NAMES.drh);
+
+    process.env.DRH_API_URL = "https://drh.test.invalid";
+    names = (await (await app.request(url("/workspaces"))).json()).map(
+      (w: { name: string }) => w.name,
+    );
+    expect(names).toContain(WORKSPACE_NAMES.drh);
   });
 });
 
@@ -217,6 +315,46 @@ describe("PUT /workspaces/:id", () => {
     expect(config.provider.type).toBe("openai");
   });
 
+  it("rejects a literal provider apiKey — secrets belong in the environment", async () => {
+    // A literal key here would sit in plaintext in the workspaces row (and so in
+    // the docker bundle's server-data volume), and createModelFromConfig prefers
+    // config.apiKey over process.env, so it would silently shadow the configured
+    // environment. Policy is .env for OSS / key vault when hosted.
+    const created = await (await createWorkspace()).json();
+
+    const res = await app.request(url(`/workspaces/${created.id}`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Leaky",
+        provider: { type: "openai", model: "gpt-4o", apiKey: "sk-literal-secret" },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts an apiKey that references an environment variable", async () => {
+    const created = await (await createWorkspace()).json();
+
+    const res = await app.request(url(`/workspaces/${created.id}`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Indirect",
+        provider: {
+          type: "openai",
+          model: "gpt-4o",
+          apiKey: "${OPENAI_API_KEY}",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const config = JSON.parse((await res.json()).config);
+    expect(config.provider.apiKey).toBe("${OPENAI_API_KEY}");
+  });
+
   it("returns 404 when trying to update a non-existent workspace", async () => {
     const res = await app.request(
       url("/workspaces/00000000-0000-0000-0000-000000000000"),
@@ -262,8 +400,8 @@ describe("DELETE /workspaces/:id", () => {
 });
 
 // ---------------------------------------------------------------------------
-// /tools, /runtime-status, /trace — endpoints added in PRs 26878 / 26912 /
-// 26931. Tests use workspaces with empty mcp arrays so the routes don't
+// /tools, /runtime-status, /trace — tool / status / trace endpoints. Tests
+// use workspaces with empty mcp arrays so the routes don't
 // require live MCP connections — covers shape + happy paths.
 // ---------------------------------------------------------------------------
 

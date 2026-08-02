@@ -21,10 +21,14 @@ import {
   looksClarifying,
   percentiles,
   resolveWorkspaceId,
+  resolveWorkspaceIdByName,
+  isWorkspaceUsable,
   runN,
   runPrompt,
 } from "./helpers.js";
-import { selectScenarios } from "./scenarios.js";
+import { selectScenarios, selectDrhScenarios } from "./scenarios.js";
+// Relative, not the workspace alias — tests/ is not a workspace package.
+import { WORKSPACE_NAMES } from "../../packages/shared/src/index.js";
 
 const envCheck = accuracyEvaluationEnvOk();
 const shouldSkip = !envCheck.ok;
@@ -243,6 +247,138 @@ describe.skipIf(shouldSkip)(`LLM accuracy — routing`, () => {
       // catches only genuinely hung work. Per-iteration error trap in
       // runN's failFactory keeps one timeout from killing remaining
       // iterations.
+      TEST_TIMEOUT_MS,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Data Readiness Hub two-layer routing. Skipped unless that workspace exists (seeded
+// when Data Readiness Hub is configured — DRH_API_URL set + the mcp-drh server on :3003) — a
+// normal single-workspace run never resolves it, so every scenario no-ops green.
+// Proves, against a SECOND domain/workspace: WHAT → drh-domain-expert (which
+// answers from the curated corpus (and refuses off-corpus via the shared
+// GROUNDING_PREAMBLE) — injecting for a 2nd
+// expert), HOW → drh-datasources calling a real drh__ tool, and — every Data Readiness Hub
+// turn — NO rpi__ tool leak (cross-workspace tool isolation). The reverse (an RPI
+// turn touching a drh__ tool) holds by construction: drh tools live only on the
+// Data Readiness Hub workspace's mcp connection.
+// ---------------------------------------------------------------------------
+describe.skipIf(shouldSkip)(`LLM accuracy — Data Readiness Hub two-layer routing`, () => {
+  if (shouldSkip) return;
+  const { scenarios, n } = selectDrhScenarios();
+  let drhWorkspaceId: string | null = null;
+
+  beforeAll(async () => {
+    // Gate on DRH being USABLE, not on the workspace existing. The seed now
+    // creates that workspace unconditionally (so a missing DRH_API_URL can no
+    // longer delete it), which means absence — the old skip signal — never
+    // happens and these scenarios would run against an unconfigured DRH.
+    const id = await resolveWorkspaceIdByName(WORKSPACE_NAMES.drh);
+    drhWorkspaceId = id && (await isWorkspaceUsable(id)) ? id : null;
+    if (drhWorkspaceId) {
+      console.log(
+        `[accuracy-evaluation] running ${scenarios.length} Data Readiness Hub scenarios × N=${n}`,
+      );
+    } else {
+      // A skip must never read as a pass — name the cause and the count. Two
+      // distinct causes now that the DRH card is gated on DRH_API_URL:
+      //   id === null → workspace NOT LISTED (DRH_API_URL unset → card filtered
+      //                 off GET /workspaces). This is the unprovisioned case.
+      //   id !== null → listed but the mcp-drh server on :3003 isn't reachable
+      //                 (down, or DRH_API_URL set but other DRH vars missing).
+      const cause =
+        id === null
+          ? `workspace not listed (DRH_API_URL unset → Data Readiness Hub card gated off GET /workspaces)`
+          : `workspace listed but not reachable (mcp-drh on :3003 down or partially configured)`;
+      console.log(
+        `[accuracy-evaluation] ${scenarios.length} Data Readiness Hub scenarios SKIPPED: ${cause}. ` +
+          `Enable by configuring Data Readiness Hub (DRH_API_URL + DRH creds) with the mcp-drh server on :3003.`,
+      );
+    }
+  }, TEST_TIMEOUT_MS);
+
+  for (const sc of scenarios) {
+    it(
+      `[${sc.id}] "${sc.prompt}" → ${sc.expectedSkill}`,
+      async () => {
+        if (!drhWorkspaceId) {
+          console.log(`  ${sc.id}: [skip — Data Readiness Hub not reachable]`);
+          return;
+        }
+        const wsId = drhWorkspaceId;
+        const failFactory = (err: unknown) => ({
+          passed: false,
+          allDispatches: [] as string[],
+          toolNames: [] as string[],
+          leaked: [] as string[],
+          toolHitOk: false,
+          finalText: "",
+          error: err instanceof Error ? err.message : String(err),
+        });
+
+        const { results, passRate } = await runN(
+          n,
+          async () => {
+            const { traceEvents } = await runPrompt(sc.prompt, {
+              workspaceId: wsId,
+            });
+            const allDispatches = getAllDispatches(traceEvents);
+            const subAgentToolCalls = getSubAgentToolCalls(traceEvents);
+            const finalText = getFinalText(traceEvents);
+            const toolNames = subAgentToolCalls.map((t) => t.toolName);
+
+            const routingOk = allDispatches.includes(sc.expectedSkill!);
+            const textOk = !sc.textNonEmpty || (finalText && finalText.length > 0);
+            const containsOk =
+              !sc.textContains ||
+              finalText.toLowerCase().includes(sc.textContains.toLowerCase());
+            // Tool-hit guard: routing accuracy isn't just which skill — it's
+            // that the sub-agent actually reached the stub tool. Deterministic
+            // proof we hit the mcp-drh server, not merely dispatched the skill.
+            const toolHitOk =
+              !sc.expectedToolNamePattern ||
+              toolNames.some((nm) => sc.expectedToolNamePattern!.test(nm));
+            // Cross-workspace isolation: a Data Readiness Hub turn must call NO rpi__ tool.
+            const leaked = toolNames.filter((nm) => /^rpi__/.test(nm));
+
+            return {
+              passed: !!(
+                routingOk &&
+                textOk &&
+                containsOk &&
+                toolHitOk &&
+                leaked.length === 0
+              ),
+              allDispatches,
+              toolNames,
+              leaked,
+              toolHitOk,
+              finalText,
+              error: undefined as string | undefined,
+            };
+          },
+          failFactory,
+          `drh:${sc.id}`,
+        );
+
+        const r0 = results[0];
+        console.log(
+          `  ${sc.id}: ${(passRate * 100).toFixed(0)}% pass · dispatches=${JSON.stringify(r0.allDispatches)}` +
+            (sc.expectedToolNamePattern
+              ? ` · toolHit=${r0.toolHitOk ? "yes" : "NO"} tools=${JSON.stringify(r0.toolNames)}`
+              : "") +
+            (r0.leaked.length ? ` · RPI-LEAK=${JSON.stringify(r0.leaked)}` : "") +
+            (sc.note ? ` · ${sc.note}` : ""),
+        );
+
+        expect(
+          passRate,
+          `${sc.id} pass-rate ${(passRate * 100).toFixed(0)}% < ${(THRESHOLD * 100).toFixed(0)}% ` +
+            `(dispatches=${JSON.stringify(r0.allDispatches)}, toolHit=${r0.toolHitOk}, tools=${JSON.stringify(r0.toolNames)}, ` +
+            `leaked=${JSON.stringify(r0.leaked)}, textLen=${r0.finalText.length})`,
+        ).toBeGreaterThanOrEqual(THRESHOLD);
+      },
       TEST_TIMEOUT_MS,
     );
   }

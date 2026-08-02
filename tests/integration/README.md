@@ -14,6 +14,11 @@ bun run test:accuracy-evaluation
 # Optional:
 ACCURACY_EVALUATION_WORKSPACE_NAME=RedpointAI  # benchmark target (default "RedpointAI"); resolved to
                                                # an id via GET /api/v1/workspaces. A missing target
+> **`bun run test` does not run this suite.** It filters per workspace package and never reaches
+> `tests/integration/`, so routing accuracy is invisible to the default suite — these files once
+> failed to even import for an entire release stretch while every `bun run test` stayed green. Run
+> `bun run test:accuracy-evaluation` when routing, tiers, dispatch or grounding could be affected.
+
                                                # THROWS (RED) — the suite never silent-skips to green.
 ACCURACY_EVALUATION_THRESHOLD=0.8           # pass-rate floor (default 0.8 — at N=1, effectively 1.0)
 ACCURACY_EVALUATION_API_KEY=rpai_...        # required unless server has AUTH_REQUIRED=false

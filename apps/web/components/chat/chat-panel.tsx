@@ -55,8 +55,8 @@ export function ChatPanel({ workspaceId, suggestions }: ChatPanelProps) {
   // returns the apps/web proxy URL (/api/proxy/chat/<id>); the proxy reads
   // the HttpOnly session cookie server-side, decodes the JWT, and attaches
   // X-RPI-Token to apps/server itself. Browser code never sees the raw RPI
-  // access_token — closes the XSS exfil surface flagged in cousin's PR 1
-  // review (the JS-visible session.rpi.accessToken is gone).
+  // access_token — closes the XSS exfil surface flagged in an earlier
+  // security review (the JS-visible session.rpi.accessToken is gone).
   const transport = useMemo(
     () =>
       new AssistantChatTransport({

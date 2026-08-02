@@ -5,7 +5,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { InfoPanel } from "@/components/chat/info-panel";
 import { Button } from "@/components/ui/button";
-import { PanelRightClose, PanelRightOpen, Settings, Shield } from "lucide-react";
+import { ArrowLeft, PanelRightClose, PanelRightOpen } from "lucide-react";
 import Link from "next/link";
 import { getWorkspace } from "@/lib/api";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -29,6 +29,15 @@ function WorkspaceChatPageInner() {
   const searchParams = useSearchParams();
   const [suggestions, setSuggestions] = useState<string[] | undefined>();
   const [title, setTitle] = useState("RedpointAI");
+  // Whether this workspace actually talks to RPI — drives the RPI-specific header
+  // affordance below. Keyed off the workspace's MCP connections (Redpoint
+  // Interaction has `rpi`, Data Readiness Hub has `drh`) rather than the
+  // workspace name, which is editable.
+  // Defaults false so the control never flashes in before the config resolves.
+  const [usesRpi, setUsesRpi] = useState(false);
+  // Product short code (RPI / DRH) — drives the header subline, which names the
+  // product rather than repeating the platform tagline the landing page shows.
+  const [shortName, setShortName] = useState<string | null>(null);
 
   // URL-synced panel state. `?panel=open` opens; `?panel=closed` closes; absent
   // falls through to the responsive default (closed under 800px, open above).
@@ -55,6 +64,13 @@ function WorkspaceChatPageInner() {
       try {
         const config = JSON.parse(ws.config);
         if (config.suggestions?.length) setSuggestions(config.suggestions);
+        setShortName(
+          typeof config.shortName === "string" ? config.shortName : null,
+        );
+        setUsesRpi(
+          Array.isArray(config.mcp) &&
+            config.mcp.some((m: { name?: string }) => m?.name === "rpi"),
+        );
       } catch {}
       if (ws.name) setTitle(ws.name);
     }).catch(() => {});
@@ -77,26 +93,24 @@ function WorkspaceChatPageInner() {
   return (
     <div className="flex h-dvh flex-col">
       <header className="flex flex-col gap-3 border-b border-border px-6 py-4 min-[800px]:flex-row min-[800px]:items-start min-[800px]:justify-between">
-        <div className="min-w-0">
-          <h1 className="truncate text-3xl font-bold tracking-tight" title={title}>{title}</h1>
-          <p className="mt-1 text-muted-foreground">
-            AI Agent Platform for RedPoint Interaction
-          </p>
+        <div className="flex items-center gap-3 min-w-0">
+          <Link href="/" aria-label="Back to workspaces">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft data-icon />
+            </Button>
+          </Link>
+          <div className="min-w-0">
+            <h1 className="truncate text-3xl font-bold tracking-tight" title={title}>{title}</h1>
+            <p className="mt-1 text-muted-foreground">
+              {shortName
+                ? `Redpoint Global · AI Agent for ${shortName}`
+                : "Redpoint Global · Agentic AI Platform"}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
-          <RpiHeaderAffordance />
-          <Link href="/admin">
-            <Button variant="ghost" size="sm">
-              <Shield data-icon="inline-start" />
-              Admin
-            </Button>
-          </Link>
+          {usesRpi && <RpiHeaderAffordance />}
           <ThemeToggle />
-          <Link href={`/workspace/${workspaceId}/settings`}>
-            <Button variant="ghost" size="icon" aria-label="Workspace settings">
-              <Settings data-icon />
-            </Button>
-          </Link>
           <Button
             variant="ghost"
             size="icon"

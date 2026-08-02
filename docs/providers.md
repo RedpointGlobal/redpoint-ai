@@ -71,7 +71,7 @@ Each workspace specifies its own provider, enabling different agents to use diff
   "provider": {
     "type": "anthropic",
     "model": "claude-sonnet-4-6",
-    "apiKey": "sk-ant-override-key",
+    "apiKey": "${ANTHROPIC_API_KEY}",
     "baseUrl": "https://custom-proxy.example.com"
   }
 }
@@ -81,17 +81,22 @@ Each workspace specifies its own provider, enabling different agents to use diff
 |-------|----------|-------------|
 | `type` | Yes | Provider identifier |
 | `model` | Yes | Model name |
-| `apiKey` | No | Overrides the server-level env var |
+| `apiKey` | No | `${ENV_VAR}` reference only; a literal key is rejected by the schema |
 | `baseUrl` | No | Custom API endpoint |
 | `azureDeployment` | No | Azure OpenAI deployment name |
 
-## Runtime Switching
+## Choosing a provider
 
-Providers are resolved at request time from the workspace config. You can:
+The provider is derived from the environment at boot and written into the seeded
+workspaces: `pickDefaultProvider()` picks Azure, then Anthropic, then OpenAI, by
+which API key is present. Model and deployment follow
+`AZURE_OPENAI_DEPLOYMENT_ID` / `AZURE_OPENAI_MODEL` / `ANTHROPIC_MODEL` /
+`OPENAI_MODEL`, falling back to the shipped defaults.
 
-- Set a default provider via environment variables on the server
-- Override per-workspace with `apiKey` and `baseUrl` fields
-- Switch a workspace's provider at any time via `PUT /api/v1/workspaces/:id`
+**Edit `.env` (or the key vault, when hosted) and restart — that is the switch.**
+The seed rewrites workspace config on every boot, so a provider changed through
+`PUT /api/v1/workspaces/:id` is reverted on the next restart; that endpoint is
+not the way to change models.
 
 ## Available Providers API
 

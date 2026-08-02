@@ -27,8 +27,17 @@ type DataflowTestInstances =
 type AudienceExecutionResults =
   components["schemas"]["AudienceExecutionResultsJsonResponseMessage"];
 
-/** Default for run_* lifecycle tools — matches Java RPI-MCPServer (5 min). */
-const DEFAULT_TIMEOUT_SECONDS = 300;
+// TIMEOUT INVARIANT (do not break): this tool poll budget must be the
+// SMALLEST of the three timeouts in the path so a too-long job fails as a
+// CLEAN tool-timeout error, not a transport socket/abort kill:
+//   this 220s  <  apps/server patched-transport 240s  <  mcp-rpi Bun.serve
+//   idleTimeout 255s (Bun's hard ceiling — the binding constraint).
+// Was 300 ("matches Java RPI-MCPServer 5 min"): that EXCEEDED both transport
+// timeouts, so a long poll was killed by the transport (silent socket death)
+// instead of erroring cleanly. Do NOT raise back to 300 without first raising
+// the two transport layers — Bun caps idleTimeout at 255s, so 300 is
+// structurally impossible to honor here.
+const DEFAULT_TIMEOUT_SECONDS = 220;
 
 /** RPI file-type filter value for audience files. */
 const AUDIENCE_FILE_TYPE = "Audience";
@@ -442,7 +451,7 @@ export function registerAudienceTools(
     .max(3600)
     .default(DEFAULT_TIMEOUT_SECONDS)
     .describe(
-      `Max seconds to wait for the workflow to finish (default ${DEFAULT_TIMEOUT_SECONDS}s = 5 min, matches Java RPI-MCPServer). The tool polls every 1s.`,
+      `Max seconds to wait for the workflow to finish (default ${DEFAULT_TIMEOUT_SECONDS}s). The tool polls every 1s. The ceiling is the MCP transport, not this tool: raising it past ~240s means the transport kills the call before this budget is reached.`,
     );
 
   registerTool(

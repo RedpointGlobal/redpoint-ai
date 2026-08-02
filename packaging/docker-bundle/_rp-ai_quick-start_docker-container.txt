@@ -1,0 +1,38 @@
+RedpointAI — Quick Start  (prebuilt, build __VERSION__)
+================================================
+
+LAUNCH
+  1)  Install and start Docker Desktop, once:
+        https://www.docker.com/products/docker-desktop/
+  2)  Extract this zip anywhere.
+  3)  Double-click start_redpoint-ai.bat — or right-click it and
+      "Run as administrator". The app opens in your browser.
+      (Nothing to configure — credentials are already baked in.)
+
+VERIFY  (what success looks like)
+  The black terminal window lists all 4 services as running, then opens the app:
+
+    +----------+------------------+----------------------------+
+    | Service  | Address          | What it is                 |
+    +----------+------------------+----------------------------+
+    | server   | localhost:3000   | API / backend              |
+    | web      | localhost:3001   | the app - opens for you    |
+    | mcp-rpi  | localhost:3002   | RPI tool server            |
+    | mcp-drh  | localhost:3003   | Data Readiness Hub tools   |
+    +----------+------------------+----------------------------+
+
+  Then the app's right-panel CONFIG tab shows:  Build Version == __VERSION__.
+
+To stop: double-click stop_redpoint-ai.bat (your data is kept; re-run start to bring it back).
+
+------------------------------------------------------------------------
+ADVANCED — point at your own instance
+------------------------------------------------------------------------
+Edit .env (in this folder): replace the RPI / DRH / LLM values with your own
+— see the "ADVANCED" block at the bottom of .env for exactly which keys —
+then re-run start_redpoint-ai.bat.
+
+If the double-click is blocked, open PowerShell in this folder and run:
+    docker load -i rp-ai-images.tar   (first time only)
+    docker compose up -d              (start)
+    docker compose down               (stop)

@@ -3,10 +3,16 @@
  * directory must parse successfully against the loader's Zod schema.
  *
  * The other loader tests use synthetic fixtures and exercise the parser; this
- * one runs the parser against the real files. A frontmatter regression in any
- * shipped skill — bad YAML, missing required field, out-of-range maxSteps —
- * fails this test, surfacing the breakage at PR time rather than at server
- * boot.
+ * one runs the parser against the real files.
+ *
+ * It asserts the EXACT shipped set, not a count. loadSkillsFromDirectory()
+ * catches a malformed SKILL.md, logs it, and CONTINUES (loader.ts) — so a
+ * broken frontmatter file is silently skipped, and any assertion based on
+ * `length > 0` or a partial name list stays green while the skill vanishes.
+ * Nine of the fifteen shipped skills had no assertion anywhere before this.
+ *
+ * Exact equality also means adding a skill fails here until the list is
+ * updated: shipping a new skill should be a deliberate edit, not a silent one.
  */
 import { describe, it, expect } from "bun:test";
 import { existsSync } from "fs";
@@ -18,29 +24,38 @@ const __testsDir = dirname(fileURLToPath(import.meta.url));
 // packages/skills/src/__tests__ → repo root is 4 levels up
 const SKILLS_DIR = join(__testsDir, "../../../../skills");
 
+/**
+ * Every skill shipped under skills/ (including skills/experts/). Update this
+ * list deliberately when adding or removing one — that is the point.
+ */
+const EXPECTED_SKILLS = [
+  "drh-data-quality",
+  "drh-datasources",
+  "drh-domain-expert",
+  "drh-feeds",
+  "drh-foundation-expert",
+  "drh-runs",
+  "drh-schedules",
+  "rpi-admin",
+  "rpi-audiences",
+  "rpi-clients",
+  "rpi-domain-expert",
+  "rpi-folders",
+  "rpi-foundation-expert",
+  "rpi-interactions",
+  "rpi-selection-rules",
+] as const;
+
 describe("repo skills/ directory", () => {
   it("exists at the expected repo-root path", () => {
     expect(existsSync(SKILLS_DIR)).toBe(true);
   });
 
-  it("loads every SKILL.md without schema errors", async () => {
+  it("loads exactly the shipped skill set — every SKILL.md, by name", async () => {
+    // Equality, not a count: the loader skips a file it cannot parse, so a
+    // count or a partial list cannot tell "loaded fine" from "silently gone".
     const skills = await loadSkillsFromDirectory(SKILLS_DIR);
-    expect(skills.length).toBeGreaterThan(0);
-  });
-
-  it("contains the expected RPI skill set", async () => {
-    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
-    const names = new Set(skills.map((s) => s.name));
-    const required = [
-      "rpi-foundation-expert",
-      "rpi-audiences",
-      "rpi-interactions",
-      "rpi-selection-rules",
-      "rpi-folders",
-    ];
-    for (const name of required) {
-      expect(names.has(name)).toBe(true);
-    }
+    expect(skills.map((s) => s.name).sort()).toEqual([...EXPECTED_SKILLS].sort());
   });
 
   it("each shipped skill has a unique name", async () => {
@@ -69,22 +84,21 @@ describe("repo skills/ directory", () => {
     expect(expert!.mcpToolFilter ?? []).toEqual([]);
   });
 
-  it("rpi-domain-expert SKILL.md carries the grounding rule + curated body (grounding guarantee)", async () => {
+  it("rpi-domain-expert SKILL.md has the curated body; grounding contract is NOT duplicated in-file (injected at dispatch)", async () => {
     const skills = await loadSkillsFromDirectory(SKILLS_DIR);
     const expert = skills.find((s) => s.name === "rpi-domain-expert");
     expect(expert).toBeDefined();
-    // Durable grounding: answer ONLY from the curated body, and refuse (don't
-    // invent) for anything not covered. Pin the directive + the out-of-scope
-    // refusal so a future scrub can't silently weaken it. Updated when the SME
-    // V1 body landed — the old "hasn't been authored" empty-body refusal was
-    // removed with the interim decline block; the behavioral guard now lives in
-    // the converted grounding pair in tests/integration/scenarios.ts.
-    expect(expert!.instructions).toContain(
+    // Phase 2: the grounding contract (answer-only-from-body / refuse-if-uncovered,
+    // H6 adjacency + multi-part guards) no longer lives in this file — it's the
+    // shared GROUNDING_PREAMBLE, prepended at dispatch in router.ts and pinned in
+    // grounding-preamble.test.ts. This test now guards (a) that real curated
+    // content is present and (b) that the block was NOT re-authored back into the
+    // SKILL.md (which would re-introduce the drift Phase 2 removed).
+    expect(expert!.instructions).toContain("Configuration foundations");
+    expect(expert!.instructions).not.toContain("## Grounding rule");
+    expect(expert!.instructions).not.toContain(
       "Answer **only** from the **Curated knowledge**",
     );
-    expect(expert!.instructions).toContain("curated RPI knowledge");
-    // body landed (SME V1): a stable anchor proving real curated content is present
-    expect(expert!.instructions).toContain("Configuration foundations");
   });
 
   it("each per-category action skill has an mcpToolFilter", async () => {
