@@ -18,6 +18,13 @@ export interface Scenario {
   textContains?: string;
   /** Light assertion: agent's text must be non-empty (defaults true for skilled scenarios). */
   textNonEmpty?: boolean;
+  /**
+   * Action-scenario tool-hit guard: when set, the run must show a sub-agent
+   * tool call whose NAMESPACED name (e.g. `drh__drh_list_sources`) matches this
+   * pattern. Proves routing reached the actual MCP tool — not just that the
+   * skill was dispatched. Deterministic (exact tool name), unlike a text check.
+   */
+  expectedToolNamePattern?: RegExp;
   note?: string;
 }
 
@@ -269,5 +276,89 @@ export function selectScenarios(): {
   n: number;
 } {
   return { scenarios: SCENARIOS, n: SCENARIO_RUN_COUNT };
+}
+
+/**
+ * Data Readiness Hub routing scenarios — run ONLY against the "Data Readiness Hub" workspace (seeded
+ * when Data Readiness Hub is configured: DRH_API_URL + DRH creds + the live mcp-drh server
+ * on :3003). The routing.test.ts Data Readiness Hub block resolves that workspace by name
+ * and SKIPS every scenario when it's absent, so these never fail a normal
+ * single-workspace run. They exercise the full two-layer flow against the real
+ * tools (the domain-expert now carries the SME-curated WHAT corpus):
+ *   - knowledge intent  → drh-domain-expert (WHAT), which answers from the corpus
+ *   - out-of-scope Q    → drh-domain-expert declines (proves the shared
+ *                         GROUNDING_PREAMBLE injects for a SECOND expert)
+ *   - operation intent  → drh-datasources (HOW), which calls a real drh__ tool
+ * Every Data Readiness Hub turn additionally asserts NO rpi__ tool leak (cross-workspace
+ * isolation) — enforced in the test, not per-scenario.
+ */
+export const DRH_SCENARIOS: Scenario[] = [
+  {
+    id: "drh-knowledge-what-is-datasource",
+    prompt: "What is a data source in Data Readiness Hub?",
+    expectedSkill: "drh-domain-expert",
+    textNonEmpty: true,
+    textContains: "source",
+    note: "WHAT — definitional Data Readiness Hub concept → drh-domain-expert, which now answers from the curated corpus (§3 sources & feeds) → mentions 'source'.",
+  },
+  {
+    id: "drh-knowledge-out-of-scope-refusal",
+    prompt: "What are Data Readiness Hub's pricing and licensing tiers?",
+    expectedSkill: "drh-domain-expert",
+    textNonEmpty: true,
+    textContains: "curated",
+    note: "GROUNDING for a 2nd expert — pricing/licensing is NOT in the curated body, so the injected GROUNDING_PREAMBLE must make drh-domain-expert refuse ('not in ... curated knowledge' → contains 'curated').",
+  },
+  {
+    id: "drh-op-list-datasources",
+    prompt: "List my data sources",
+    expectedSkill: "drh-datasources",
+    textNonEmpty: true,
+    // Tool-hit guard: the sub-agent must actually call a real Data Readiness Hub tool on the
+    // Data Readiness Hub MCP connection — proves we hit the live server, not just that the
+    // skill was picked. Namespaced drh__ (conn name) + the real drh_list_sources.
+    expectedToolNamePattern: /^drh__drh_list_sources$/,
+    note: "HOW — operation intent → drh-datasources action skill, which resolves a database then MUST call the real drh__drh_list_sources tool (tool-hit asserted, not inferred).",
+  },
+  {
+    id: "drh-op-list-feeds",
+    prompt: "List my feeds",
+    expectedSkill: "drh-feeds",
+    textNonEmpty: true,
+    expectedToolNamePattern: /^drh__drh_list_feeds$/,
+    note: "HOW — feed listing → drh-feeds → real drh__drh_list_feeds tool-hit.",
+  },
+  {
+    id: "drh-op-list-match-runs",
+    prompt: "Show me the recent match runs",
+    expectedSkill: "drh-runs",
+    textNonEmpty: true,
+    expectedToolNamePattern: /^drh__drh_list_database_match_runs$/,
+    note: "HOW — run reporting → drh-runs → real (database-scoped) drh__drh_list_database_match_runs tool-hit.",
+  },
+  {
+    id: "drh-op-hygiene-scores",
+    prompt: "What are my data hygiene scores?",
+    expectedSkill: "drh-data-quality",
+    textNonEmpty: true,
+    expectedToolNamePattern: /^drh__drh_get_hygiene_scores$/,
+    note: "HOW — data-quality metric → drh-data-quality → real drh__drh_get_hygiene_scores tool-hit.",
+  },
+  {
+    id: "drh-op-list-schedules",
+    prompt: "List my schedules",
+    expectedSkill: "drh-schedules",
+    textNonEmpty: true,
+    expectedToolNamePattern: /^drh__drh_list_schedules$/,
+    note: "HOW — schedule listing → drh-schedules → real drh__drh_list_schedules tool-hit.",
+  },
+];
+
+/** Return all Data Readiness Hub stub scenarios at N=1 (mirrors selectScenarios). */
+export function selectDrhScenarios(): {
+  scenarios: Scenario[];
+  n: number;
+} {
+  return { scenarios: DRH_SCENARIOS, n: SCENARIO_RUN_COUNT };
 }
 

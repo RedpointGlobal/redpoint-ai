@@ -40,7 +40,7 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 
 1. **No `clientId` provided** (most common — generic requests like "list my audiences") — OMIT the `clientId` argument entirely. The MCP server applies `RPI_DEFAULT_CLIENT_ID` from environment automatically. Do NOT ask the user for a clientId; do NOT refuse to proceed.
 
-2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `e0633f26-9843-4def-b394-6791ac51e6de`) — pass it through unchanged.
+2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890`) — pass it through unchanged.
 
 3. **`clientId` provided as a non-UUID** (almost certainly a tenant *name* the parent agent forgot to resolve) — your sub-agent's tool filter does NOT include name-resolution. Stop and respond with a clear error asking the parent to redispatch via the **rpi-clients** skill to resolve the name to a UUID. Forwarding a name will fail with a 401 / "Client ID '00000000-0000-0000-0000-000000000000' not found" because RPI parses non-UUID input to the empty UUID.
 
@@ -91,7 +91,7 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 This is the canonical 3-step lifecycle. The audience workflow runs asynchronously; you must poll until it terminates.
 
 1. Resolve audience `id` (use `get_audience_by_name` or `list_audiences` if the user gave you a name).
-2. Call `run_audience_test_workflow` with the `id`. The tool blocks on a default 5-minute timeout polling internally — you don't usually need to call the status tool yourself unless the user wants intermediate updates or the run exceeds the timeout. The return value contains the `workflowAssociationInstanceID`.
+2. Call `run_audience_test_workflow` with the `id`. The tool blocks on a default 220-second timeout polling internally — you don't usually need to call the status tool yourself unless the user wants intermediate updates or the run exceeds the timeout. The return value contains the `workflowAssociationInstanceID`.
 3. If the run completed inside `run_audience_test_workflow`, jump straight to fetching results:
    - `get_audience_workflow_block_results` for per-block **counts** (filters, splits, suppression blocks) — counts only; for the configured suppression *rules*, see `get_audience_by_id`.
    - `get_audience_workflow_results` for the final aggregated output.
@@ -140,7 +140,7 @@ The discipline: ask yourself *"is the user pointing at a specific record's name,
 
 - **Don't show `id` (or any GUID) to users by default.** The card view already includes `name` and `parentFolderName`. Use `id` for chaining only.
 - **Disambiguate** duplicate names with `parentFolderName` — `get_audience_by_name` returns all same-name matches in `matches[]`; never silently pick the first when there's more than one.
-- **The default 5-minute timeout** on `run_audience_test_workflow` is conservative. If the user expects the workflow to take longer (large audiences), pass a larger `timeoutSeconds` (range 5–3600). The tool polls every 1 second internally; you don't need to call the status tool manually unless you want to surface intermediate progress.
+- **The default 220-second timeout** on `run_audience_test_workflow` is bounded by the MCP transport, not by caution: the transport aborts the call at ~240s, so a larger `timeoutSeconds` cannot actually buy more time and the run dies mid-flight instead of returning a clean timeout. Treat ~220s as the working ceiling and tell the user a long workflow needs to be checked with the status tool rather than waited on. The tool polls every 1 second internally; you don't need to call the status tool manually unless you want to surface intermediate progress.
 
 ## Response discipline
 

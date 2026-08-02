@@ -1,6 +1,6 @@
 # RedpointAI FAQ
 
-The comprehensive guide for RPI customers looking to leverage AI and agentic capabilities. If your question isn't answered here, check the other [docs](../README.md#documentation) or open an issue.
+The comprehensive guide for RPI customers looking to leverage AI and agentic capabilities. If your question isn't answered here, check the other [docs](../README.md#documentation) or contact support@redpointglobal.com.
 
 ---
 
@@ -14,9 +14,7 @@ The comprehensive guide for RPI customers looking to leverage AI and agentic cap
 6. [MCP Tools & RPI Integration](#6-mcp-tools--rpi-integration)
 7. [API & Integration](#7-api--integration)
 8. [Authentication & Security](#8-authentication--security)
-9. [Deployment & Operations](#9-deployment--operations)
-10. [Troubleshooting](#10-troubleshooting)
-11. [Best Practices](#11-best-practices)
+9. [Troubleshooting](#9-troubleshooting)
 
 ---
 
@@ -24,7 +22,7 @@ The comprehensive guide for RPI customers looking to leverage AI and agentic cap
 
 ### Q: What is RedpointAI?
 
-RedpointAI is an open-source AI agent platform built for RedPoint Interaction (RPI). It lets you build, compose, and run AI agents that operate against your RPI instance using any LLM provider. The platform exposes RPI capabilities as standard MCP tools, groups them into domain-specific skills, and provides a chat-based UI for natural-language interaction with your marketing data and operations.
+RedpointAI is an open-source AI agent platform built for Redpoint Interaction (RPI). It lets you build, compose, and run AI agents that operate against your RPI instance using your own LLM provider key (BYOM). The platform exposes RPI capabilities as standard MCP tools, groups them into domain-specific skills, and provides a chat-based UI for natural-language interaction with your marketing data and operations.
 
 ### Q: How does RedpointAI relate to RPI?
 
@@ -44,11 +42,11 @@ See the [LICENSE](../LICENSE) file in the repository root for details.
 
 ### Q: What LLM providers are supported?
 
-Five providers are supported out of the box: **Anthropic** (Claude), **OpenAI** (GPT), **Google** (Gemini), **Azure OpenAI**, and **Ollama** (local models). You can use different providers for different workspaces and switch at any time. See [Providers](providers.md) for full details.
+Three providers are selectable from the environment: **Azure OpenAI**, **Anthropic** (Claude), and **OpenAI** (GPT) — the seed picks by key presence (Azure → Anthropic → OpenAI). **Google** and **Ollama** are wired in the provider factory but are not part of the environment-driven selection. Provider and model come from the environment; there is no in-app switcher. See [Providers](providers.md) for details.
 
 ### Q: Is this production-ready?
 
-RedpointAI is designed for production use. It includes JWT/OIDC authentication, API key management, Prometheus metrics, audit logging, Docker deployment, and PostgreSQL support. That said, you should review the [Deployment](deployment.md) guide and configure authentication (`AUTH_REQUIRED=true`) before exposing it to production traffic.
+RP_AI is an OSS source project for engineers. The codebase ships with JWT/OIDC authentication, Prometheus metrics, audit logging, and PostgreSQL support — but the OSS repo itself is not a supported production deployment vehicle. For production use, contact support@redpointglobal.com. At minimum, set `AUTH_REQUIRED=true` before exposing any instance beyond localhost.
 
 ---
 
@@ -56,58 +54,36 @@ RedpointAI is designed for production use. It includes JWT/OIDC authentication, 
 
 ### Q: What are the prerequisites?
 
-Depends on which audience you are. The three paths each have a different prereq footprint:
+Both paths start from a clone + `bun install`; the footprint differs from there:
 
-- **Agent developer** (download the binary) — nothing pre-installed; just an MCP client that can speak to `http://localhost:3002/mcp`.
-- **Non-tech evaluator** (`docker compose up`) — Docker only. No Bun, no Node.
-- **Code contributor** (clone + dev setup) — Bun ≥ 1.3.0, Node ≥ 22.6, an LLM API key, optionally an RPI instance for MCP.
+- **Code contributor** (run the stack) — Bun ≥ 1.3.0, Node ≥ 22.6, an LLM API key, optionally an RPI instance for MCP.
+- **Agent developer** (build the MCP binary) — Bun to build; the compiled binary is self-contained (no Bun/Node needed to run it), plus an MCP client that can speak to `http://localhost:3002/mcp`.
 
 ### Q: How do I install and run locally?
 
-Three audiences, three paths — pick yours:
+Two paths, both from one clone — pick yours:
 
-**Agent developer:** Download the per-platform zip from Releases, extract, fill `.env`, double-click the launcher. See [Standalone MCP Server](rpi-mcp-server.md) for details.
-
-**Non-tech evaluator** (zero runtime install beyond Docker):
-```bash
-git clone https://github.com/RedPointGlobal/redpoint-ai.git
-cd redpoint-ai
-cp .env.example .env                        # add your LLM key + RPI creds (if applicable)
-docker compose up
-```
-Web UI at http://localhost:3001 once containers are healthy.
-
-**Code contributor** (two commands after the one-time Bun install):
+**Code contributor** (run the full stack):
 ```bash
 curl -fsSL https://bun.sh/install | bash    # one-time, if Bun missing
-git clone https://github.com/RedPointGlobal/redpoint-ai.git
+git clone https://github.com/RedpointGlobal/redpoint-ai.git
 cd redpoint-ai && bun install && bun run dev
 ```
+
+**Agent developer** (build the standalone MCP binary): clone + `bun install`, then `cd packages/mcp-rpi && bun run build:linux` (or `build:windows`), run the binary, and point your MCP client at `http://localhost:3002/mcp`. See [Standalone MCP Server](rpi-mcp-server.md) for details.
 
 `cp .env.example .env` first and add at least `ANTHROPIC_API_KEY`. The server lazy-bootstraps the SQLite schema and seeds default workspaces on first start. See [Getting Started](getting-started.md) for the full contributor walkthrough.
 
 ### Q: What environment variables are required?
 
-At minimum, you need one LLM provider API key. Here are the core variables:
+At minimum, you need one LLM provider key. The root `.env.example` is the reference — its layout:
 
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `ANTHROPIC_API_KEY` | -- | Yes* | Anthropic Claude API key |
-| `OPENAI_API_KEY` | -- | No | OpenAI API key |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | -- | No | Google Gemini API key |
-| `PORT` | `3000` | No | Server port |
-| `AUTH_REQUIRED` | `false` | No | Enable authentication |
-| `AUTH_SECRET` | -- | Prod | JWT signing secret (generate: `openssl rand -base64 32`) |
-| `RPI_INTEGRATION_API_URL` | -- | MCP | Your on-premises RPI Integration API URL |
-| `RPI_OAUTH_CLIENT_ID` / `RPI_OAUTH_CLIENT_SECRET` | -- | MCP | OAuth2 client credentials for `/connect/token` |
-| `RPI_DEFAULT_CLIENT_ID` | -- | MCP | Default value for the `X-ClientID` header (RPI tenant/workspace ID) |
-| `RPI_PROXY_USER` / `RPI_PROXY_PASS` | -- | No | Optional native RPI service account fallback |
-| `RPI_PROXY_ENABLED` | -- | No | Set `false` to force-disable the proxy user |
-| `MCP_HTTP_PORT` | `3002` | No | MCP server HTTP port |
-| `DATABASE_URL` | -- | No | PostgreSQL URL (production only; dev uses SQLite) |
-| `LOG_LEVEL` | `info` | No | Logging level |
-
-*At least one LLM provider key is required. See the full list in `.env.example`.
+| Block | Variables | Notes |
+|-------|-----------|-------|
+| LLM provider (one required) | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_RESOURCE_NAME` (+ `DEPLOYMENT_ID`, `API_VERSION`) | Seed precedence: Azure → Anthropic → OpenAI. Single-key alternatives: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. |
+| App auth | `AUTH_REQUIRED` (`false` dev default), `AUTH_SECRET` | `AUTH_SECRET`: generate with `openssl rand -base64 32` |
+| RPI | `RPI_INTEGRATION_API_URL`, `RPI_OAUTH_CLIENT_ID`/`_SECRET`, `RPI_DEFAULT_CLIENT_ID`, `RPI_PROXY_USER`/`_PASS`/`_ENABLED` | Your on-premises RPI instance + tenant + optional proxy service account |
+| DRH | `DRH_API_URL`, `DRH_DEFAULT_CLIENT_ID`, `DRH_DEFAULT_DATABASE_ID`, `DRH_PROXY_USER`/`_PASS` | `DRH_API_URL` is also the provisioning switch — unset means no DRH card |
 
 ### Q: How do I verify the platform is working?
 
@@ -115,7 +91,7 @@ The fastest path is `bun run check` (verifies install invariants — Bun version
 
 ```bash
 bun run check              # default
-bun run check --running    # also curl the three live health endpoints (run after dev / compose up)
+bun run check --running    # also curl the three live health endpoints (run after `bun run dev`)
 ```
 
 For a more granular look, hit the underlying endpoints directly:
@@ -129,7 +105,7 @@ curl http://localhost:3000/api/v1/health
 curl http://localhost:3000/api/v1/providers
 # Expected: array of providers with configured:true
 
-# List workspaces (auto-seeded with the single RedpointAI workspace)
+# List workspaces (auto-seeded: Redpoint Interaction + Data Readiness Hub)
 curl http://localhost:3000/api/v1/workspaces
 # Expected: array with 1 default workspace
 ```
@@ -148,22 +124,16 @@ RPI_DEFAULT_CLIENT_ID=your-rpi-tenant-id
 # Optional proxy user (native RPI service account fallback)
 RPI_PROXY_USER=your-service-account
 RPI_PROXY_PASS=your-service-account-password
-MCP_HTTP_PORT=3002
+RPI_MCP_HTTP_PORT=3002
 ```
 
 Then start the MCP server (`bun run dev:mcp` or included in `bun run dev`). Add an MCP connection to your workspace configuration pointing to `http://localhost:3002/mcp`. The MCP server will fail to start if `RPI_INTEGRATION_API_URL`, `RPI_OAUTH_CLIENT_ID`, `RPI_OAUTH_CLIENT_SECRET`, or `RPI_DEFAULT_CLIENT_ID` is not set. Callers authenticate via Bearer token (native RPI or OIDC); the optional proxy user is used as a fallback when no per-user token is present — set `RPI_PROXY_ENABLED=false` to force-disable it.
 
-### Q: What does the default workspace include?
+### Q: What workspaces ship by default?
 
-On first run, the server auto-seeds a single workspace: **RedpointAI** (Azure GPT-4.1 with the RPI domain skills enabled). When you create a new workspace, you choose a name, provider/model, and optionally attach MCP servers and skills. The default agent configuration uses the system prompt "You are a helpful assistant." with a max of 20 tool-calling steps. You can also load a pre-built template:
+On first run the server seeds two product workspaces and keeps them authoritative: **Redpoint Interaction (RPI)** and **Data Readiness Hub (DRH)**. Both always appear, whether or not their backends are configured — an unconfigured backend simply means that workspace's MCP server isn't reachable.
 
-```bash
-curl -X POST http://localhost:3000/api/v1/workspaces \
-  -H "Content-Type: application/json" \
-  -d @skills/templates/marketing-ops.json
-```
-
-Available templates in `skills/templates/`: `marketing-ops.json`, `customer-insights.json`, `content-manager.json`, `rpi-admin.json`.
+Their configuration comes from the seed (code) plus the environment, and is rewritten on every boot. There is no supported way to create a workspace or edit one from the UI: anything outside the seeded set is removed on the next restart, so a hand-created workspace would not survive.
 
 ---
 
@@ -211,7 +181,7 @@ Or via the web UI at `http://localhost:3001`. See [Workspaces](workspaces.md) fo
 | `description` | No | What this workspace is for |
 | `provider.type` | Yes | `anthropic`, `openai`, `google`, `azure-openai`, `ollama` |
 | `provider.model` | Yes | Model identifier (e.g., `claude-sonnet-4-6`) |
-| `provider.apiKey` | No | Override server-level API key |
+| `provider.apiKey` | No | `${ENV_VAR}` reference only; literal keys are rejected |
 | `provider.baseUrl` | No | Custom endpoint URL |
 | `agent.systemPrompt` | No | Agent instructions (default: "You are a helpful assistant.") |
 | `agent.maxSteps` | No | Max tool-calling iterations, 1-100 (default: 20) |
@@ -239,7 +209,7 @@ The system prompt (`agent.systemPrompt`) is the instruction set given to the LLM
 
 ### Q: How do workspace-level settings interact with global settings?
 
-Workspace settings override global defaults. For example, if you set `ANTHROPIC_API_KEY` in your `.env` file, all workspaces using the `anthropic` provider type will use that key unless the workspace specifies its own `provider.apiKey`. Similarly, the default system prompt is used unless the workspace provides its own `agent.systemPrompt`.
+Workspace settings override global defaults. For example, if you set `ANTHROPIC_API_KEY` in your `.env` file, all workspaces using the `anthropic` provider type will use that key unless the workspace points at a different env var via `provider.apiKey` (a `${ENV_VAR}` reference — literal keys are rejected, so a secret never lands in the database). Similarly, the default system prompt is used unless the workspace provides its own `agent.systemPrompt`.
 
 ---
 
@@ -247,50 +217,27 @@ Workspace settings override global defaults. For example, if you set `ANTHROPIC_
 
 ### Q: What does BYOM (Bring Your Own Model) mean?
 
-BYOM means you choose which LLM provider and model powers each workspace. RedpointAI doesn't lock you into a single provider -- you can use Anthropic for one workspace and OpenAI for another, or switch providers at any time by updating the workspace configuration.
+BYOM means you bring your own LLM provider key. RedpointAI doesn't lock you into a single provider — set the key for the provider you want in `.env`, and the seed configures the workspaces from it on boot.
 
 ### Q: Which providers are supported?
 
-| Provider | Env Variable | Example Models |
-|----------|-------------|----------------|
-| Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6`, `claude-opus-4-7`, `claude-haiku-4-5-20251001` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `o1`, `o3-mini` |
-| Google | `GOOGLE_GENERATIVE_AI_API_KEY` | `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.0-flash` |
-| Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_RESOURCE_NAME` | Your Azure deployment models |
-| Ollama | *(none -- runs locally)* | Any model pulled locally (`llama3.1`, `mistral`, etc.) |
-
+| Provider | Env Variable | Selection |
+|----------|-------------|-----------|
+| Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_RESOURCE_NAME` | env-selectable (first precedence) |
+| Anthropic | `ANTHROPIC_API_KEY` | env-selectable |
+| OpenAI | `OPENAI_API_KEY` | env-selectable |
+| Google | `GOOGLE_GENERATIVE_AI_API_KEY` | wired in the provider factory; not part of the env-driven selection |
+| Ollama | *(none — local daemon)* | wired in the provider factory; not part of the env-driven selection |
 
 See [Providers](providers.md) for setup instructions for each.
 
 ### Q: How do I configure a provider?
 
-1. Set the API key in your `.env` file (e.g., `ANTHROPIC_API_KEY=sk-ant-...`)
-2. When creating a workspace, specify the provider type and model:
-
-```json
-{
-  "provider": {
-    "type": "anthropic",
-    "model": "claude-sonnet-4-6"
-  }
-}
-```
-
-For Ollama (local models), no API key is needed -- just set the base URL:
-
-```json
-{
-  "provider": {
-    "type": "ollama",
-    "model": "llama3.1",
-    "baseUrl": "http://localhost:11434"
-  }
-}
-```
+Set exactly one provider's key in the root `.env` for a turnkey run (if multiple are set, Azure wins). Override the model with the provider's model variable (`AZURE_OPENAI_MODEL` / `AZURE_OPENAI_DEPLOYMENT_ID`, `ANTHROPIC_MODEL`, `OPENAI_MODEL`); sensible defaults apply when unset. The seed rewrites each workspace's provider/model from the environment on every boot — configuration is `.env` + seed, not the UI or the API.
 
 ### Q: Can I use different providers for different workspaces?
 
-Yes. Each workspace has its own `provider` configuration. You could run marketing ops on Claude (strong tool-calling), customer insights on GPT-4o, and a dev/test workspace on a local Ollama model -- all simultaneously.
+No. The seed derives one provider from the environment and applies it to the seeded workspaces on every boot. Changing provider = changing the key in `.env` and restarting.
 
 ### Q: How do I check which providers are configured?
 
@@ -299,13 +246,6 @@ curl http://localhost:3000/api/v1/providers
 ```
 
 Returns an array of providers showing which ones have API keys configured and their available models.
-
-### Q: What are the recommended models for different use cases?
-
-- **Complex multi-step agent workflows** (tool-calling, skill routing): Anthropic Claude Sonnet or Opus -- best-in-class tool-calling reliability
-- **Simple Q&A or expert skills**: Any provider works well; GPT-4o and Gemini 2.5 Flash are cost-effective
-- **Local/air-gapped deployments**: Ollama with Llama 3.1 or Mistral
-- **Enterprise compliance requirements**: Azure OpenAI (data stays in your cloud)
 
 ---
 
@@ -341,7 +281,7 @@ This reduces per-request token costs by ~97% compared to exposing all tools dire
 
 ### Q: What skills come pre-built?
 
-Skills come in two roles: **action skills** define the *how* (each wraps one RPI domain's MCP tools), and **expert skills** define the *what* (domain knowledge, no tools). RedpointAI ships six action skills and two experts.
+Skills come in two roles: **action skills** define the *how* (each wraps one RPI domain's MCP tools), and **expert skills** define the *what* (domain knowledge, no tools). RedpointAI ships 15 skills across the two product workspaces: 11 action skills and 4 experts.
 
 **Action skills (the *how* — entity operations via MCP tools):**
 
@@ -477,7 +417,7 @@ RPI_INTEGRATION_API_URL=https://rpi.your-company.com
 RPI_OAUTH_CLIENT_ID=your-oauth-client-id
 RPI_OAUTH_CLIENT_SECRET=your-oauth-client-secret
 RPI_DEFAULT_CLIENT_ID=your-rpi-tenant-id
-MCP_HTTP_PORT=3002
+RPI_MCP_HTTP_PORT=3002
 ```
 
 ```bash
@@ -535,7 +475,7 @@ Connections are cached per workspace+server combination and reused across reques
 Common issues and fixes:
 
 - **0 tools returned**: Ensure the MCP server is running and the `Accept` header includes both `application/json` and `text/event-stream`
-- **Connection refused**: Check `MCP_HTTP_PORT` matches the server's port and the URL in workspace config
+- **Connection refused**: Check `RPI_MCP_HTTP_PORT` matches the server's port and the URL in workspace config
 - **Auth failures**: Verify `RPI_INTEGRATION_API_URL`, `RPI_OAUTH_CLIENT_ID`, `RPI_OAUTH_CLIENT_SECRET`, and `RPI_DEFAULT_CLIENT_ID` are correct; if using the proxy user, check `RPI_PROXY_USER`/`RPI_PROXY_PASS`
 - **Timeout**: RPI instance may be unreachable -- check network connectivity and `RPI_INTEGRATION_API_URL`
 - **Tool filtering**: If `allowedTools` is set in the MCP connection config, only those tools will be available
@@ -676,21 +616,6 @@ Keys can be scoped to specific workspaces and given read/write permissions with 
 
 The `proxy.ts` file (Next.js 16's equivalent of `middleware.ts`) intercepts every request to the web UI. If the user isn't authenticated, it redirects them to `/login`. It allows `/login` and `/api/auth/*` routes through without authentication so the login flow can complete.
 
-### Q: What security best practices should I follow?
-
-- Always set `AUTH_REQUIRED=true` in production
-- Use OIDC/JWT for enterprise SSO integration:
-  ```env
-  OIDC_JWKS_URI=https://your-idp/.well-known/jwks.json
-  OIDC_ISSUER=https://your-idp
-  OIDC_AUDIENCE=redpoint-ai
-  ```
-- Rotate API keys regularly and set expiration dates
-- Use workspace-scoped API keys with minimum necessary permissions
-- Keep LLM provider API keys in environment variables, never in workspace configs stored in the database
-- Review audit logs (`logAudit`) for unexpected activity
-- Use HTTPS in production (terminate TLS at your load balancer/reverse proxy)
-
 ### Q: Should my agent use the proxy user or log in as a specific RPI user?
 
 Two options for the *outbound* leg (how the MCP server authenticates to RPI when invoking a tool):
@@ -705,115 +630,7 @@ For the full walkthrough — login, token forwarding, refresh, logout, error han
 
 ---
 
-## 9. Deployment & Operations
-
-### Q: How do I deploy with Docker?
-
-```bash
-cp .env.example .env
-# Edit .env with your API keys and configuration
-
-# Development (SQLite)
-docker compose up
-
-# Production (with PostgreSQL)
-docker compose --profile production up
-```
-
-The Docker setup includes three services: API server (port 3000), web UI (port 3001), and MCP server (port 3002). The production profile adds PostgreSQL.
-
-### Q: What are the Docker images and how do they relate?
-
-| Image | Dockerfile | Base | Purpose |
-|-------|-----------|------|---------|
-| `server` | `apps/server/Dockerfile` | `oven/bun:1` | API server with agent engine |
-| `web` | `apps/web/Dockerfile` | `oven/bun:1` (build) / `node:22-alpine` (run) | Next.js frontend (standalone output) |
-| `mcp-rpi` | `packages/mcp-rpi/Dockerfile` | `oven/bun:1` | RPI MCP server |
-
-The server image includes native build tools (python3, make, g++) for `better-sqlite3`. The web image uses a multi-stage build: Bun for building, Node.js Alpine for the slim production runtime.
-
-### Q: How do I configure environment variables in production?
-
-Pass environment variables to your containers via:
-
-- Docker Compose `.env` file
-- Docker `--env-file` flag
-- Kubernetes ConfigMaps/Secrets
-- Cloud platform environment configuration (ECS, Cloud Run, etc.)
-
-Key production variables:
-
-```env
-AUTH_REQUIRED=true
-DATABASE_URL=postgres://<user>:<pass>@example.com:5432/redpoint_ai
-ANTHROPIC_API_KEY=sk-ant-...
-RPI_INTEGRATION_API_URL=https://rpi.your-company.com
-RPI_OAUTH_CLIENT_ID=your-oauth-client-id
-RPI_OAUTH_CLIENT_SECRET=your-oauth-client-secret
-RPI_DEFAULT_CLIENT_ID=your-rpi-tenant-id
-OIDC_JWKS_URI=https://your-idp/.well-known/jwks.json
-OIDC_ISSUER=https://your-idp
-OIDC_AUDIENCE=redpoint-ai
-```
-
-### Q: What metrics are available?
-
-The `/metrics` endpoint exposes Prometheus-format metrics:
-
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `redpoint_ai_runs_total` | Counter | `status`, `provider` | Total completed runs |
-| `redpoint_ai_tokens_total` | Counter | `type` (input/output) | Total tokens consumed |
-| `redpoint_ai_run_duration_seconds` | Histogram | -- | Run duration (buckets: 0.5s to 60s) |
-| `redpoint_ai_mcp_calls_total` | Counter | `server`, `tool` | MCP tool invocations |
-| `redpoint_ai_active_sessions` | Gauge | -- | Currently active chat sessions |
-
-Scrape with Prometheus, Datadog, or any compatible monitoring tool.
-
-### Q: How do I monitor active sessions and token usage?
-
-Query the metrics endpoint:
-
-```bash
-curl http://localhost:3000/metrics
-```
-
-Key things to watch:
-
-- **`redpoint_ai_active_sessions`**: Current concurrent sessions (gauge). If this only goes up, check for session leak bugs.
-- **`redpoint_ai_tokens_total{type="input"}`** and `{type="output"}`: Track input/output token consumption for cost monitoring.
-- **`redpoint_ai_runs_total{status="failed"}`**: Failed run count -- alert if this spikes.
-- **`redpoint_ai_run_duration_seconds`**: P50/P95 latency via histogram buckets.
-
-### Q: What is the recommended production architecture?
-
-```
-                    Load Balancer (HTTPS)
-                    /        |         \
-              Web (3001)  Server (3000)  MCP (3002)
-                              |              |
-                         PostgreSQL      RPI Instance
-```
-
-- **Load balancer**: Terminates TLS, routes traffic to services
-- **Server**: Stateless, horizontally scalable (connect all instances to same PostgreSQL)
-- **Web**: Stateless Next.js frontend (can run multiple instances)
-- **MCP**: Runs alongside server or as separate service (one per RPI instance)
-- **PostgreSQL**: Required for multi-instance deployments (replaces SQLite)
-
-### Q: How do I scale the platform?
-
-The server is stateless (state lives in the database), so you can scale horizontally:
-
-1. Switch from SQLite to PostgreSQL (`DATABASE_URL`)
-2. Run multiple server instances behind a load balancer
-3. Run MCP servers as separate containers (one per RPI instance if needed)
-4. Mount the `skills/` directory as a shared volume or bake skills into the Docker image
-5. Skills are loaded once on startup -- restart servers to pick up new skills
-
----
-
-## 10. Troubleshooting
+## 9. Troubleshooting
 
 ### Q: Chat returns 401 errors -- how do I fix auth issues?
 
@@ -843,14 +660,6 @@ The `/api/v1/providers` endpoint checks for specific environment variables:
 
 Ensure the variable is set correctly (no trailing whitespace, no quotes around the value in `.env`). Restart the server after changing `.env` values.
 
-### Q: Docker build fails -- common causes?
-
-- **Lockfile errors**: Don't use `--frozen-lockfile` in Dockerfiles; bun workspace symlinks don't survive `COPY`
-- **Native compilation failures** (better-sqlite3): The server Dockerfile needs `python3`, `make`, and `g++` installed
-- **`next: command not found`**: The Next.js binary lives in the workspace-level `node_modules`, not the root. The web Dockerfile uses `./node_modules/.bin/next build`
-- **Build context too large**: Ensure `.dockerignore` excludes `node_modules`, `.next`, `.git`, `*.db`, and `.env`
-- **TypeScript errors**: Run `bun run build` locally first to catch type errors before building Docker images
-
 ### Q: Token usage seems high -- how do I optimize?
 
 - **Enable the skill router**: This is the biggest win. Skill-based routing uses ~500 tokens for the catalog vs ~15k for all raw tools.
@@ -873,50 +682,3 @@ Logs go to stdout by default. In production, pipe to your log aggregation servic
 
 ---
 
-## 11. Best Practices
-
-### Q: How should I structure system prompts for best results?
-
-- **Be specific about the role**: "You are a marketing operations specialist for an e-commerce company" beats "You are helpful"
-- **List capabilities explicitly**: Tell the agent what it can do and which skills/tools are available
-- **Set behavioral guidelines**: "Always confirm before executing workflows", "Provide context alongside raw data"
-- **Keep it concise**: Every token in the system prompt is sent with every request -- aim for 200-500 words
-- **Use markdown formatting**: Headings and bullet points help the LLM parse instructions
-- **Test iteratively**: Start simple, observe agent behavior, and refine
-
-### Q: What's the best approach for multi-step RPI workflows?
-
-Combine an **expert skill** (the *what*) with **action skills** (the *how*), each with a focused `mcpToolFilter`. For example, an interaction launch workflow might:
-
-1. Consult `rpi-foundation-expert` for RPI conventions and terminology (expert skill, no tools)
-2. Use `rpi-audiences` to inspect the target audience, then `rpi-interactions` to activate and run the interaction workflow (action skills, with tools)
-3. Check the workflow instance status via `rpi-interactions`
-
-The skill router handles this naturally -- the agent consults experts for advice, then delegates execution to action skills. Set `maxSteps` high enough (15-25) for multi-tool sequences.
-
-### Q: How do I test skills before deploying?
-
-1. **Local testing**: Run `bun run dev` and create a test workspace with the skill enabled
-2. **API testing**: Use curl to send test messages and observe the streaming response
-3. **Unit tests**: Add tests in the skill package (`bun run test:skills`)
-4. **Dry-run mode**: For action skills, add "describe what you would do without executing" to your test prompt
-5. **Check skill loading**: The server logs which skills are loaded on startup -- verify your skill appears
-
-### Q: How should I handle sensitive customer data?
-
-- **LLM provider data policies**: Understand your provider's data retention and usage policies. For maximum control, use Azure OpenAI (data stays in your cloud) or Ollama (fully local).
-- **System prompt guardrails**: Include instructions like "Never include PII in your responses" or "Summarize customer data without exposing individual records"
-- **Workspace-scoped access**: Use separate workspaces with different API keys for different access levels
-- **Tool filtering**: Three axes available — `mcpToolFilter` in a SKILL.md frontmatter narrows per sub-agent; `allowedTools` on an MCP connection narrows per workspace and is forwarded to the MCP server as a `names` filter on `tools/list`; `category` on `tools/list` coarsely narrows by tool domain (e.g. `audiences`, `interactions`). See `docs/rpi-mcp-server.md#tool-filtering` for the wire format.
-- **Audit everything**: Enable audit logging and monitor for unexpected data access patterns
-- **Network isolation**: Run MCP servers in the same network as RPI to avoid data traversing public networks
-
-### Q: What are the recommended patterns for production use?
-
-1. **One workspace per use case**: Don't overload a single workspace with too many skills. Create focused agents.
-2. **Enable auth**: `AUTH_REQUIRED=true` with OIDC or API keys. Always.
-3. **Use PostgreSQL**: SQLite is great for development but doesn't support concurrent access from multiple server instances.
-4. **Monitor metrics**: Set up Prometheus scraping and alerts on `active_sessions`, `runs_total{status="failed"}`, and token consumption.
-5. **Pin model versions**: Use specific dated model versions (e.g., `claude-haiku-4-5-20251001`) rather than aliases to avoid unexpected behavior changes — where a dated form exists; some current models (e.g., `claude-sonnet-4-6`, `claude-opus-4-7`) ship alias-only and have no dated variant.
-6. **Start with expert skills**: Let users get comfortable with knowledge-based interactions before enabling action skills that modify RPI data.
-7. **Review tool access**: Audit which tools each skill can access. The principle of least privilege applies to AI agents too.

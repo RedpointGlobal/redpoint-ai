@@ -64,7 +64,24 @@ export const ProviderConfigSchema = z.object({
     "azure-openai",
   ]),
   model: z.string(),
-  apiKey: z.string().optional(),
+  /**
+   * Secrets live in the environment (.env for OSS, key vault when hosted) —
+   * never in the workspace row. A literal key here would sit in plaintext in
+   * SQLite and inside the docker bundle's server-data volume, and
+   * createModelFromConfig() prefers it over process.env, so it would silently
+   * shadow the configured environment.
+   *
+   * Only `${ENV_VAR}` indirection is accepted, which resolveEnvVar() in
+   * apps/server/src/config/providers.ts already understands. Omit it entirely
+   * and the provider falls back to the environment, which is the normal path.
+   */
+  apiKey: z
+    .string()
+    .regex(
+      /^\$\{\w+\}$/,
+      "apiKey must reference an environment variable, e.g. ${AZURE_OPENAI_API_KEY} — literal secrets are not stored in the workspace",
+    )
+    .optional(),
   baseUrl: z.string().optional(),
   azureDeployment: z.string().optional(),
 });

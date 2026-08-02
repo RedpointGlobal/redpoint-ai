@@ -4,7 +4,6 @@
 
 - [Getting Started](./docs/getting-started.md)
 - [Architecture](./docs/architecture.md)
-- [Deployment](./docs/deployment.md)
 - [FAQ](./docs/faq.md)
 
 ## Security Related
@@ -13,7 +12,7 @@ For any Security concerns or Issues, please refer to [SECURITY.md](./SECURITY.md
 
 ## How to file issues and get help
 
-This project uses GitHub Issues to track bugs and feature requests. Please refer to those guidelines to fill them: [CONTRIBUTING.md](./CONTRIBUTING.md)
+For bugs, questions, and feature requests, email **support@redpointglobal.com**. Include your scenario, steps to reproduce (for bugs), and the build version shown in the app's Config tab. This is the canonical support channel.
 
 ## Redpoint Support Policy
 

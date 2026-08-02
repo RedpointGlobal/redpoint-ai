@@ -4,6 +4,7 @@ import type { Skill } from "./skill.js";
 import { isDispatchable, isInlinedExpert } from "./skill.js";
 import { cachingOptions } from "./caching-options.js";
 import { pruneMessageHistory } from "./message-pruner.js";
+import { GROUNDING_PREAMBLE } from "./grounding-preamble.js";
 
 /**
  * Creates the `execute_skill` meta-tool that the router agent uses
@@ -75,9 +76,21 @@ export function createSkillRouterTool(
         tools = await getToolsForSkill(toolFilter);
       }
 
+      // Dispatched knowledge experts (`type:"expert"` — inlined experts never
+      // reach the dispatch path) get the shared, hardened grounding contract
+      // prepended to their curated body: answer only from the body, refuse if
+      // uncovered (H6 adjacency + multi-part guards). Injected centrally here
+      // rather than hand-authored per SKILL.md so every present and future
+      // dispatched expert inherits ONE contract that can't drift. Action/hybrid
+      // skills run on their own instructions unchanged.
+      const system =
+        skill.type === "expert"
+          ? `${GROUNDING_PREAMBLE}\n\n${skill.instructions}`
+          : skill.instructions;
+
       const { text, toolCalls, steps } = await generateText({
         model,
-        system: skill.instructions,
+        system,
         prompt: input,
         tools,
         // Deterministic execution, same rationale as the parent orchestrator:
@@ -189,14 +202,15 @@ export function buildRouterSystemPrompt(
   const experts = skills.filter(isInlinedExpert);
   const actionable = skills.filter(isDispatchable);
 
-  // Render rpi-foundation-expert first in Domain Knowledge — it's the
+  // Render a domain's *-foundation-expert first in Domain Knowledge — it's the
   // cross-cutting "house style" expert (always-on guidance about clientId,
-  // folder lookups, terminology, error patterns). The other experts are
-  // domain-specific (audience, campaign, etc.) and benefit from the
-  // foundation framing being read first. Cosmetic ride-along per RPI terminal
-  // an agent review; runtime identical regardless of order.
+  // scoping, terminology, error patterns). The other experts are domain-specific
+  // and benefit from the foundation framing being read first. Generalized across
+  // domains (rpi-foundation-expert, drh-foundation-expert, …). Cosmetic
+  // ride-along; runtime identical regardless of order.
+  const isFoundation = (name: string) => name.endsWith("-foundation-expert");
   const sortedExperts = [...experts].sort((a, b) =>
-    a.name === "rpi-foundation-expert" ? -1 : b.name === "rpi-foundation-expert" ? 1 : 0,
+    isFoundation(a.name) ? -1 : isFoundation(b.name) ? 1 : 0,
   );
 
   const sections: string[] = [baseSystemPrompt];
@@ -237,7 +251,7 @@ export function buildRouterSystemPrompt(
         `   **This applies to ANY question about the RPI *product*, not only campaign concepts** — its administration, deployment, infrastructure, networking, security/SSO, backup/disaster-recovery, licensing, and pricing all route to the \`(knowledge)\` skill too. **Backstop:** if you do NOT dispatch an RPI-product question for any reason, do NOT answer it from general/training knowledge — say plainly it is not in the curated RPI knowledge and point the user to Redpoint Global documentation or support. Only genuinely **non-RPI** general-knowledge questions may be answered directly.\n` +
         `6. Any request that mentions specific data the user has ("my X", "list X", "count X", "show me X by Y") is an OPERATION, not knowledge — dispatch via execute_skill.\n` +
         `7. You may chain: answer from your knowledge first, then dispatch an action skill to implement.\n` +
-        `8. **Carry IDs forward when chaining skills.** When dispatching an action skill that operates on an entity (client, audience, folder, interaction, selection rule, etc.), check prior skill outputs in this conversation. If a previous call already returned that entity's UUID, include the UUID in the \`request\` field — not just the user-typed name. Action skills are filtered to a narrow tool set and generally cannot resolve names themselves, so passing a name when you already have the UUID forces a redundant resolve round-trip. Example: instead of \`request: "List audiences for client CDP-dev-e0633f"\`, pass \`request: "List audiences for client e0633f26-9843-4def-b394-6791ac51e6de (CDP-dev-e0633f)"\`. Include the human-readable name in parentheses for the skill's own logging/output, but lead with the UUID so the skill uses it directly. **If the user did NOT name a specific tenant/client, OMIT the client identifier entirely** — the MCP server applies its default client automatically. **NEVER pass a tenant *name* (e.g. "CDP-dev-e0633f") as a client id**: action skills treat it as a UUID, RPI parses a non-UUID to the empty UUID, and the call fails. Lead with a resolved UUID or omit — never a bare name.\n` +
+        `8. **Carry IDs forward when chaining skills.** When dispatching an action skill that operates on an entity (client, audience, folder, interaction, selection rule, etc.), check prior skill outputs in this conversation. If a previous call already returned that entity's UUID, include the UUID in the \`request\` field — not just the user-typed name. Action skills are filtered to a narrow tool set and generally cannot resolve names themselves, so passing a name when you already have the UUID forces a redundant resolve round-trip. Example: instead of \`request: "List audiences for client Acme-Retail-Demo"\`, pass \`request: "List audiences for client a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890 (Acme-Retail-Demo)"\`. Include the human-readable name in parentheses for the skill's own logging/output, but lead with the UUID so the skill uses it directly. **If the user did NOT name a specific tenant/client, OMIT the client identifier entirely** — the MCP server applies its default client automatically. **NEVER pass a tenant *name* (e.g. "Acme-Retail-Demo") as a client id**: action skills treat it as a UUID, RPI parses a non-UUID to the empty UUID, and the call fails. Lead with a resolved UUID or omit — never a bare name.\n` +
         `9. Always relay the skill's response back to the user clearly.\n` +
         `10. **The Available Skills catalog above is the COMPLETE list of operations you can perform; each skill's \`Tools:\` line is the authoritative capability surface.** Two shapes of capability question:\n` +
         `   - **Broad** ("what can you do?", "what skills do you have?"): enumerate the domains in the catalog.\n` +

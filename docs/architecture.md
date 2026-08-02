@@ -6,15 +6,24 @@ RedpointAI is a two-layer system. The **MCP layer** wraps RPI's Integration API 
 
 ### Architecture evolution
 
-The system has grown through five tool- and knowledge-exposure / interop generations; all five live in the codebase today (the major version tracks this generation):
+The system has grown through six tool- and knowledge-exposure / interop generations; all six live in the codebase today (the major version tracks this generation):
 
 1. **Flat tooling** — every MCP tool exposed at once. Now the Tier-3 fallback only (token-heavy; safety net, not a target).
 2. **Categorical tooling** — on-demand category discovery via a single `tools_list` meta-tool (Tier 2). Activates when the MCP server sets the boolean `listTools.supportsFiltering: true` in its initialize handshake (checked by `resolveTier()`); wired but runtime-inactive — the RPI MCP server doesn't set it yet.
-3. **Skill routing** — one `execute_skill` meta-tool over a compact skill catalog (~500 tokens vs ~15k to expose every tool flat), dispatching to isolated sub-agents (Tier 1). **The live production path — and, from a token perspective, the most economical (lowest $) of the three tool-exposure tiers: the LLM sees a tiny catalog instead of the full tool surface on every turn.**
+3. **Skill routing** — one `execute_skill` meta-tool over a compact skill catalog (~500 tokens vs ~15k to expose every tool flat), dispatching to isolated sub-agents (Tier 1). **The live default path — and, from a token perspective, the most economical (lowest $) of the three tool-exposure tiers: the LLM sees a tiny catalog instead of the full tool surface on every turn.**
 4. **A2A** — inbound agent-to-agent server (JSON-RPC 2.0 + public agent card) so other agents can call this one. Off by default; enable by setting the boolean `A2A_ENABLED=true` (with `A2A_WORKSPACE_ID` + `A2A_BEARER_TOKEN`).
-5. **Grounded dispatched knowledge** — a tool-less domain expert (`dispatch: true`) dispatched on knowledge intent via `execute_skill`, answering **strictly from a curated body** (grounded: it refuses rather than inventing from training knowledge when that body is absent). A new *knowledge*-exposure shape, distinct from inlined experts (always-on, in-prompt) and from action dispatch (tools): the curated knowledge loads into a sub-agent only when a domain question hits it, so depth costs the parent prompt nothing. Currently `rpi-domain-expert` (the curated body is SME-authored; the skill ships with the grounding rule + an empty body it refuses on until filled).
+5. **Grounded dispatched knowledge** — a tool-less domain expert (`dispatch: true`) dispatched on knowledge intent via `execute_skill`, answering **strictly from a curated body** (grounded: it refuses rather than inventing from training knowledge for anything the body does not cover). A new *knowledge*-exposure shape, distinct from inlined experts (always-on, in-prompt) and from action dispatch (tools): the curated knowledge loads into a sub-agent only when a domain question hits it, so depth costs the parent prompt nothing. Currently `rpi-domain-expert`, with an SME-authored curated body; the grounding contract itself is not hand-written into the skill file but injected at dispatch from the shared `GROUNDING_PREAMBLE` (see [Multiple knowledge experts & the shared grounding contract](#multiple-knowledge-experts--the-shared-grounding-contract)).
+
+6. **Multi-domain platform** — more than one product domain (e.g. RPI and Data Readiness Hub), each isolated in its **own workspace** with its own MCP server connection and skill set (WHAT experts + HOW action skills), all riding the **single shared LLM orchestration/dispatch chokepoint** (chat route → orchestrator → `router.ts` `execute_skill`) — no forked LLM path per domain, so instrumentation and metering wrap one point. Domains are chosen via the landing-page workspace picker (shown when more than one workspace exists). Per-workspace `config.mcp` + `config.skills` keep tools and knowledge isolated across domains (a turn in one workspace can't reach another's tools). Data Readiness Hub is the first sibling to RPI: `packages/mcp-drh` is a real standalone MCP server (OpenAPI-typed client + Keycloak-signon auth + incoming-auth middleware) exposing the full Data Readiness Hub tool surface, with live connectivity verified end-to-end. Its per-call scope is **configured deployment context injected server-side, not derived from the prompt**: the tenant `X-ClientId` from `DRH_DEFAULT_CLIENT_ID`, and the `databaseId` from `DRH_DEFAULT_DATABASE_ID` (a tenant can hold more than one database and there is no runtime picker, so the deployment selects it). The Data Readiness Hub workspace is seeded unconditionally, but its card renders only when `DRH_API_URL` is set — the workspace-list endpoint filters it out otherwise (read-path only: the row and its threads are never touched, and the card returns intact when the key returns). RPI-only installs see only the RPI card; a partially configured DRH (URL set, other keys missing) still renders with the standard missing-key diagnostics. Its 93-tool surface is live end-to-end (read-only by default on the standalone server: the 36 `MUTATING`/`DESTRUCTIVE` tools are gated, 57 exposed — see [Read-only enforcement](#read-only-enforcement-standalone-servers)). The curated domain corpus is still pending (SME), so the domain expert returns an explicit "knowledge base not yet curated" response until it lands.
 
 Details for the tool-exposure tiers are in [Tool-exposure tiers](#tool-exposure-tiers-graceful-degradation); A2A lives in `apps/server/src/a2a/`; the dispatched-knowledge shape is in [Layer 2](#layer-2-skill-router-agent-orchestration).
+
+
+### Configuration ownership
+
+Not a generation — a property that holds across all six. **Workspace config comes from code plus the
+environment, and the seed owns it** — `apps/server/src/store/seed.ts` and the environment (`.env` for
+OSS, key vault when hosted), and nowhere else. The seed is *authoritative*: it rewrites the seeded workspaces' config on **every boot**, preserving nothing — `provider` included, since `pickDefaultProvider()` derives it from the environment and a stored copy would pin a workspace to a provider whose key has since been removed. The consequence is that changing a model or provider is an `.env` edit plus a restart, not an API call. Two properties follow. (a) **The workspace set is enforced**: after seeding, anything outside the seeded products is removed and same-name duplicates collapse to the oldest row — but never at the cost of history, since `threads` cascade, so a row that cannot be reparented is left in place instead of deleted. (b) **Secrets never enter the database**: `provider.apiKey` accepts only `${ENV_VAR}` indirection, so a literal key cannot be stored where it would sit in plaintext SQLite and silently shadow the configured environment. There is deliberately no UI for editing any of this.
 
 ## System Diagram
 
@@ -23,7 +32,7 @@ Frontend (Next.js)
   |  useChat / AG-UI (SSE)
   v
 Backend (Bun + Hono)
-  |-- Workspace Manager     — CRUD for workspace configs
+  |-- Workspace Manager     — reads seeded workspace configs (see #7)
   |-- Agent Orchestrator     — AI SDK streamText/generateText
   |-- Skill Router           — execute_skill meta-tool
   |-- Conversation Store     — threads, messages, runs
@@ -40,7 +49,8 @@ MCP Client --> RPI MCP Server --> RPI Instance
 | `apps/web` | Next.js frontend — chat UI, workspace management, provider selection |
 | `packages/shared` | Zod schemas, TypeScript types shared across packages |
 | `packages/skills` | Skill runtime — loader (parses SKILL.md), registry, router tool |
-| `packages/mcp-rpi` | Standalone MCP server wrapping RPI's Integration API (47 tools across 8 domains: admin, audiences, auth, clients, file-system, folders, interactions, selection-rules) |
+| `packages/mcp-rpi` | Standalone MCP server wrapping RPI's Integration API (47 tools across 8 domains: admin, audiences, auth, clients, file-system, folders, interactions, selection-rules; **read-only by default — 5 write tools gated, 42 exposed**, see [Read-only enforcement](#read-only-enforcement-standalone-servers)) |
+| `packages/mcp-drh` | Standalone MCP server wrapping Data Readiness Hub's OP-Services API (93 tools across 11 groups: aggs, auth, automation-logs, data-qualities, databases, feeds, runs, schedules, sources, subject-areas, ui-dashboard; **read-only by default — 36 write tools gated, 57 exposed**); Keycloak-signon auth, server-side `X-ClientId` + `databaseId` scoping |
 | `skills/` | Skill definitions — SKILL.md files organized by type |
 
 ## Data Flow
@@ -62,14 +72,24 @@ MCP Client --> RPI MCP Server --> RPI Instance
 
 ### Layer 1: MCP Server (tool exposure)
 
-The RPI MCP server is a standalone process exposing RPI capabilities via the Model Context Protocol. It supports both stdio (for Claude Desktop) and HTTP (for production). Any MCP client can connect independently of RedpointAI.
+The RPI MCP server is a standalone process exposing RPI capabilities via the Model Context Protocol. It supports both stdio (for Claude Desktop) and HTTP (the default transport). Any MCP client can connect independently of RedpointAI.
+
+#### Read-only enforcement (standalone servers)
+
+Both MCP servers ship a **read-only tool surface by default**. The standalone binaries expose the raw registered tools to *any* MCP client — no skill router, no `mcpToolFilter`, so the orchestrator's read-only posture (Layer 2) does not reach them, and the auth middleware gates *presence*, not per-tool intent. To close that gap, each server factory (`createRPIMcpServer`, `createDrhMcpServer`) runs an unconditional registration-time sweep that **disables every tool annotated `readOnlyHint: false`** via the SDK's `RegisteredTool.disable()`. A disabled tool is absent from `tools/list` **and** rejected on `tools/call` (`Tool <name> disabled`) — a list-only filter (`tool-filter.ts`) would have left it callable, so the gate uses the SDK `enabled` flag, which blocks both. Net exposed surface: **RPI 42 of 47** (5 writes gated), **Data Readiness Hub 57 of 93** (all `MUTATING` + `DESTRUCTIVE` tools gated).
+
+Three properties keep it safe and maintainable:
+
+- **Fail-closed by annotation, not a name denylist** — any write tool added later is gated automatically; the `readOnlyHint` each tool already declares *is* the contract, so a new mutating tool can't ship un-gated by omission.
+- **No env toggle** — the sweep is hardcoded, not switchable. The binaries ship with an operator-edited `.env`, so a `READ_ONLY`-style flag would hand the bypass to exactly the population it closes; the control is the rebuild, and no such key appears in any shipped `.env`.
+- **Reversible in-repo, no upstream dependency** — a small `WRITE_TOOLS_ALLOWED` constant re-enables specific tools by name (RPI keeps the selection-rule `count`/`waterfall` job tools as accepted risk; DRH's list is empty). The tool stays fully registered, so re-enabling is one array entry plus a rebuild — no RPI/DRH-side knowledge required.
 
 ### Layer 2: Skill Router (agent orchestration)
 
 For RedpointAI's own agent, MCP tools are grouped into skills. Expert (knowledge-only) skills come in two shapes:
 
 - **Inlined experts** (default) are folded directly into the system prompt as "Domain Knowledge" sections — used for cross-cutting, always-on guidance (e.g. the foundation expert: client/tenant ID, terminology, error conventions). Cheap to read, but every inlined body taxes *every* request.
-- **Dispatched experts** (`dispatch: true`, e.g. `rpi-domain-expert`) are knowledge-only but **not** inlined — they appear in the catalog as a tool-less `(knowledge)` entry and are reached via `execute_skill`, so a deep curated body loads into a sub-agent **only on a knowledge-intent hit** and costs the parent prompt nothing. A dispatched expert carries a grounding rule: it answers strictly from its curated body and refuses (rather than inventing from training knowledge) when that body is absent.
+- **Dispatched experts** (`dispatch: true`, e.g. `rpi-domain-expert`) are knowledge-only but **not** inlined — they appear in the catalog as a tool-less `(knowledge)` entry and are reached via `execute_skill`, so a deep curated body loads into a sub-agent **only on a knowledge-intent hit** and costs the parent prompt nothing. Every dispatched expert runs under a shared grounding contract (injected at dispatch, not hand-written per file): it answers strictly from its curated body and refuses (rather than inventing from training knowledge) for anything that body does not cover.
 
 Action and hybrid skills appear in the same compact catalog (~500 tokens) reached through one `execute_skill` meta-tool, instead of 30+ individual tool schemas (~15k tokens). Each action/hybrid/dispatched-expert invocation spawns an isolated sub-agent — action/hybrid sub-agents get the relevant tools; a dispatched expert's sub-agent gets none (knowledge only).
 
@@ -89,6 +109,14 @@ The agent always tries to expose **as few tools as possible** to the LLM. Tiers,
 
 **Authoring rule for skill bodies**: Skill prose (the SKILL.md body) must NEVER name specific MCP tools. Tool descriptions live in the MCP server's tool source and are discovered at runtime; skill bodies prime *domain knowledge* (entities, vocabulary, patterns), nothing else. This keeps skills resilient when the upstream tool surface changes and lets the same prose body be lifted across agent runtimes (e.g., the terminal agent) where the wiring layer differs.
 
+### Multiple knowledge experts & the shared grounding contract
+
+Dispatched experts scale to multiple domains (e.g. an RPI expert alongside a separate domain expert) without cross-contamination, on three decisions:
+
+- **One grounding contract, shared — not hand-copied per file.** Every dispatched expert answers under the same hardened rule: answer strictly from its curated body; refuse (rather than invent from training knowledge) when a topic is uncovered; never extrapolate to an *adjacent* uncovered topic; answer multi-part questions part-by-part. That contract is factored into a single **domain-agnostic** constant — `GROUNDING_PREAMBLE` in `packages/skills/src/grounding-preamble.ts` — prepended to an expert's curated body when its sub-agent is dispatched. It lives in one place so every present and future expert inherits the identical hardened rule; a grounding fix lands once, not once-per-expert-file (which would drift). The constant names no domain — each expert's own SKILL.md intro establishes identity; the preamble supplies only the rules.
+- **Isolation is per-workspace, not per-catalog.** `buildRouterSystemPrompt()` builds each workspace's catalog from that workspace's own `config.skills` allowlist. Two knowledge experts live in **separate workspaces** and never appear in the same catalog, so choosing a domain is a workspace selection (the landing page picks the workspace + its MCP server), not an in-prompt disambiguation problem. A workspace's catalog only ever contains its own domain's `(knowledge)` entry — the routing guideline stays singular and correct per-workspace, with no N-expert selection rule needed.
+- **Shared plumbing is code, never navigable content.** Dispatched experts and their sub-agents are tool-less and never touch the filesystem; the loader reads each `SKILL.md` body verbatim (no include/transclusion mechanism exists). Anything shared across experts is therefore TypeScript in `packages/skills/src/` that the router assembles into the prompt *string* at dispatch time (the same pattern as `cachingOptions`) — there is deliberately no "shared SKILL.md" file or include directive for skill bodies.
+
 ## Cross-cutting subsystems
 
 The following were ported from the v3 terminal agent and now live in `apps/server`:
@@ -97,7 +125,9 @@ The following were ported from the v3 terminal agent and now live in `apps/serve
 
 - **Deterministic + bounded + resilient LLM calls** — three settings applied at every parent (`orchestrator.ts`) and sub-agent (`router.ts`) call site, plus the Azure provider's `fetch`: (a) **`temperature: 0`** — skill/operation routing must be reproducible; the default ~1.0 made the same prompt route differently run-to-run (and the accuracy eval wobble). (b) **`maxOutputTokens` bounds** (parent 2000 / sub-agent 3000) — Azure's per-call TPM *admission estimate* is `prompt + maxOutputTokens`, so an unbounded call is charged the model max (~16K) and 429s on a tight bucket even though real output is ~200 tokens. (c) **Reactive retry-after fetch wrapper** (`apps/server/src/config/retry-fetch.ts`, wired via `createRetryAfterFetch()` into `createAzure({ fetch })`) — on a 429 it waits the deployment's *real* `retry-after` and refires, ignoring Azure's misleading `retry-after-ms: 0` (which the SDK's built-in retry follows and fast-fails on). Bounded by a 75s total budget. NB: each Azure **deployment id is its own TPM bucket**, so routing a workspace at a less-contended deployment (e.g. `gpt-4.1`'s 100K vs a shared `gpt-4o`'s 10K) is a config change, not a model downgrade — see `docs/providers.md`.
 
-- **Patched MCP transport** (`apps/server/src/mcp/patched-transport.ts`) — custom HTTP transport for `MCPClientManager` with two jobs: (a) compat patches (`protocolVersion`, `serverInfo`) for non-spec-compliant MCP servers, and (b) capturing `serverCapabilities` from the initialize response so downstream code can tell whether a server supports category filtering.
+- **Patched MCP transport** (`apps/server/src/mcp/patched-transport.ts`) — custom HTTP transport for `MCPClientManager` with two jobs: (a) compat patches (`protocolVersion`, `serverInfo`) for non-spec-compliant MCP servers, and (b) capturing `serverCapabilities` from the initialize response so downstream code can tell whether a server supports category filtering. It also fixes one end of a **timeout invariant that spans three layers**: a long-running tool must abort *before* the transport gives up, which must abort before Bun closes the socket — `tool 220s < transport 240s < Bun idleTimeout 255s`. Violate it in the middle and a long poll dies transport-aborted rather than returning a clean tool timeout, which reads as a hang. Any tool that polls (audience and interaction workflow runs) therefore caps its own budget at 220s, and the value is restated at each constant because the claim had previously spread into `describe()` strings and SKILL.md prose, where a stale copy reaches live LLM input.
+
+- **Loud degradation on an unavailable MCP server** — `getToolsForWorkspace()` is never awaited unguarded. The chat, AG-UI and workspace-tools routes each race it against a 10s fuse and, on failure, return an explicit `mcp_unavailable` 503 rather than continuing with an empty tool map. The choice is deliberate: an agent that looks healthy but silently has no tools is worse than an error, so loud-but-wrong beats quiet-and-wrong. The landing page's per-workspace status line (see the `runtime-status` enum above) is the read-only counterpart — it names the failure before a user ever opens a chat.
 
 - **MCP category discovery** (`apps/server/src/mcp/mcp-category-discovery.ts`) — when a connected MCP server advertises `supportsFiltering` with `availableCategories`, this module synthesizes a `tools_list` meta-tool so the agent discovers tools by category on demand instead of being handed every tool schema upfront. Tier selection is wired (`resolveTier()` in the chat route); this path stays runtime-inactive until the RPI MCP server enables filtering.
 
@@ -107,11 +137,11 @@ The following were ported from the v3 terminal agent and now live in `apps/serve
 
 - **Provider-agnostic prompt caching** (`packages/skills/src/caching-options.ts`) — single `cachingOptions` constant passed as `providerOptions` at every `streamText` / `generateText` / `ToolLoopAgent` call site (orchestrator, agui route, skill router sub-agent). The Vercel AI SDK silently drops keys for inactive providers, so one constant covers Anthropic (~90% off cached prefixes via explicit `cacheControl`) and OpenAI/Azure (~50% off >1024-token prefixes via `promptCacheRetention: '24h'`) with zero branching. Verified via `tokens.cached` / `tokens.cacheCreated` fields on the `TelemetryEvent.tokens` shape — populated from `usage.inputTokenDetails` and surfaced inline in step-finish messages so traffic exports show binary "is it firing?" verification (turn-2 should have `cached:N`).
 
-- **Web build-version surface** (`apps/web/version.json` → `apps/web/lib/version.ts` → `apps/web/components/chat/info-panel.tsx` Config-tab Row) — a committed `{ "version": "…" }` inlined into the client bundle at build (static import, not a runtime read). The value is a **manually-stamped `MAJOR.MINOR`** string — MAJOR tracks the architecture generation (the five above; currently 5 = grounded dispatched knowledge), MINOR is a per-cycle counter bumped each merge cycle (reset to 0 when MAJOR advances). Automatic derivation (from a release tag / commit SHA) is deferred to the publish pipeline. Build-inert: no `.git`/CI needed at build, ships as-is in the zip/image.
+- **Web build-version surface** (`packages/shared/version.json` → `apps/web/lib/version.ts` → `apps/web/components/chat/info-panel.tsx` Config-tab Row) — a committed `{ "version": "…" }` inlined into the client bundle at build (static import, not a runtime read). The value is a **manually-stamped `MAJOR.MINOR`** string — MAJOR tracks the architecture generation (the six above; currently 6 = multi-domain platform), MINOR is a per-cycle counter bumped each merge cycle (reset to 0 when MAJOR advances). Automatic derivation (from a release tag / commit SHA) is deferred to the publish pipeline. Build-inert: no `.git`/CI needed at build, ships as-is in the zip/image.
 
 ## Deployment topology
 
-In production (and via `docker compose up` locally), RedpointAI runs as **separate containers** — not a single monolith. Each subsystem has its own container with its own runtime, dependencies, lifecycle, and scaling profile:
+Via `docker compose up`, RedpointAI runs as **separate containers** — not a single monolith. Each subsystem has its own container with its own runtime, dependencies, lifecycle, and scaling profile:
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -122,6 +152,11 @@ In production (and via `docker compose up` locally), RedpointAI runs as **separa
 │  │  :3001   │    │  :3000   │    │    :3002     │      │
 │  │ Next.js  │    │   Hono   │    │ MCP server   │      │
 │  └──────────┘    └──────────┘    └──────────────┘      │
+│                                  ┌──────────────┐      │
+│                                  │   mcp-drh    │      │
+│                                  │    :3003     │      │
+│                                  │ MCP server   │      │
+│                                  └──────────────┘      │
 │                       ↓                                │
 │                  ┌──────────┐                          │
 │                  │ postgres │ (production profile)     │
@@ -135,7 +170,7 @@ In production (and via `docker compose up` locally), RedpointAI runs as **separa
 | Concern | What this gets you |
 |---------|---------------------|
 | Independent lifecycle | Restart `mcp-rpi` for a tool fix without dropping web sessions or interrupting in-flight LLM calls. |
-| Failure isolation | If `mcp-rpi` crashes, `web` stays up and shows a degraded "MCP unreachable" state instead of the whole system going dark. (mcp-rpi also degrades rather than exits on its most common failure cause — missing RPI credentials: it keeps the HTTP listener up, skips RPI tool registration, and reports degraded state via `/health` and `/mcp`.) |
+| Failure isolation | If an MCP server crashes, `web` stays up and the affected workspace card says why instead of the whole system going dark. **Both** MCP servers degrade rather than exit on their most common failure — missing credentials: the HTTP listener stays up, tool registration is skipped, and `/health` reports `mcp: "degraded"` with `reason` and `missing[]`. Each server's required set comes from its own config contract (DRH's proxy credentials, for instance, are required only when the proxy is enabled), so the report never names a variable the operator deliberately left unset. The orchestrator reduces each connection to ONE state in `runtime-status` — `not_configured` → `unauthorized` → `unreachable` → `no_tools` → `ok`, specific signals before the catch-all, since a 401 also fails the probe — and the card renders that one line. Cards stay clickable in every state, because the Config tab is where the detail lives. |
 | Different runtimes | `server` and `mcp-rpi` are Bun, `web` is Next.js (Node). Different base images, different deps, different build steps. One container would force a single-runtime compromise. |
 | Independent scaling | `web` and `server` are stateless and can horizontally scale; `mcp-rpi` is mostly stateless and scalable; `postgres` is single-instance. Each tier scales for its own load profile. |
 | Smaller images | Each container only carries what its service needs. `web` doesn't bundle `better-sqlite3`; `mcp-rpi` doesn't bundle Next.js. |
@@ -147,11 +182,12 @@ In production (and via `docker compose up` locally), RedpointAI runs as **separa
 | `web` | `apps/web/Dockerfile` | Built from this repo |
 | `server` | `apps/server/Dockerfile` | Built from this repo |
 | `mcp-rpi` | `packages/mcp-rpi/Dockerfile` | Built from this repo |
+| `mcp-drh` | `packages/mcp-drh/Dockerfile` | Built from this repo — Data Readiness Hub MCP server (sibling to mcp-rpi). DRH config comes from the single root `.env` (same file feeds all services); boots degraded when unconfigured. |
 | `postgres` | Official `postgres:16-alpine` image | Pulled, not built — commodity dependency maintained upstream |
 
-Three of the four containers are built from code in this repo; PostgreSQL is pulled as a stock image rather than rebuilt locally, which is the standard pattern for commodity infrastructure (databases, caches, brokers). This keeps our security surface to the code we own.
+Four of the five containers are built from code in this repo; PostgreSQL is pulled as a stock image rather than rebuilt locally, which is the standard pattern for commodity infrastructure (databases, caches, brokers). This keeps our security surface to the code we own.
 
-A single all-in-one container is a possibility for resource-constrained edge deployments, but it requires a process supervisor inside the container and forfeits the benefits above. We don't ship one. See [docs/deployment.md](deployment.md) for the operational walkthrough (commands, env vars, scaling, profiles).
+A single all-in-one container is a possibility for resource-constrained edge deployments, but it requires a process supervisor inside the container and forfeits the benefits above. We don't ship one.
 
 ## Key Technologies
 

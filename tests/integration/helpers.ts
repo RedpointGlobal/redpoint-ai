@@ -21,13 +21,18 @@
  *                                          When set, the workspace is resolved by name (below);
  *                                          a missing/misconfigured target THROWS (RED), never skips.
  *   ACCURACY_EVALUATION_BASE_URL         — default http://localhost:3000
- *   ACCURACY_EVALUATION_WORKSPACE_NAME   — benchmark target, default "RedpointAI"; resolved to an id
+ *   ACCURACY_EVALUATION_WORKSPACE_NAME   — benchmark target, default WORKSPACE_NAMES.rpi; resolved to an id
  *                                          at suite startup via GET /api/v1/workspaces (resolveWorkspaceId).
  *   ACCURACY_EVALUATION_API_KEY          — rpai_… (skip if AUTH_REQUIRED=false on server)
  *   ACCURACY_EVALUATION_TIMEOUT_MS       — optional per-runPrompt hard cap; primarily for
  *                                          the falsifiable cancel-probe (set =1 to force abort).
  */
 import type { TelemetryEvent } from "@redpoint-ai/shared";
+// Value import, so it must resolve at RUNTIME. tests/ is not a workspace
+// package, so the "@redpoint-ai/shared" alias does not resolve from here — the
+// type-only import above is erased before that matters, which is why it looked
+// fine. Use the relative path, matching the packages/mcp-rpi imports below.
+import { WORKSPACE_NAMES } from "../../packages/shared/src/index.js";
 import { RPIApiClient } from "../../packages/mcp-rpi/src/client/rpi-api.js";
 import { RPIAuthService } from "../../packages/mcp-rpi/src/client/rpi-auth.js";
 import { searchFileInfos } from "../../packages/mcp-rpi/src/client/search.js";
@@ -35,7 +40,7 @@ import { searchFileInfos } from "../../packages/mcp-rpi/src/client/search.js";
 const BASE_URL =
   process.env.ACCURACY_EVALUATION_BASE_URL || "http://localhost:3000";
 const WORKSPACE_NAME =
-  process.env.ACCURACY_EVALUATION_WORKSPACE_NAME || "RedpointAI";
+  process.env.ACCURACY_EVALUATION_WORKSPACE_NAME || WORKSPACE_NAMES.rpi;
 const API_KEY = process.env.ACCURACY_EVALUATION_API_KEY || "";
 
 // Resolved once at suite startup by resolveWorkspaceId() (a beforeAll in each
@@ -77,7 +82,7 @@ export function getWorkspaceId(): string {
 }
 
 /**
- * Resolve the benchmark workspace id by NAME (default "RedpointAI") via
+ * Resolve the benchmark workspace id by NAME (default WORKSPACE_NAMES.rpi) via
  * GET /api/v1/workspaces. Fail-loud: throws if the list can't be fetched or the
  * named workspace is absent, so a requested-but-misconfigured eval goes RED
  * instead of skip-to-green. Selecting by name (not list[0]) means the eval can
@@ -128,6 +133,60 @@ export async function resolveWorkspaceId(): Promise<string> {
   return _workspaceId;
 }
 
+/**
+ * Resolve ANY workspace id by name WITHOUT mutating the module global. Returns
+ * null when absent (so a caller can skip gracefully — e.g. the Data Readiness Hub block
+ * skips when Data Readiness Hub isn't configured and the workspace doesn't exist).
+ * Use for multi-workspace scenarios; the single-workspace path stays on
+ * resolveWorkspaceId()/getWorkspaceId().
+ */
+export async function resolveWorkspaceIdByName(
+  name: string,
+): Promise<string | null> {
+  const url = `${BASE_URL}/api/v1/workspaces`;
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: headers() });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  const list = (await res.json()) as Array<{ id?: string; name?: string }>;
+  return list.find((w) => w?.name === name)?.id ?? null;
+}
+
+/**
+ * Does this workspace have a usable tool surface — at least one MCP connection
+ * that is reachable AND exposing tools?
+ *
+ * Product-agnostic on purpose, so RPI and Data Readiness Hub share one gate.
+ *
+ * The DRH accuracy block used to gate on the WORKSPACE being absent, which
+ * stopped being a valid proxy the moment the seed began creating that workspace
+ * unconditionally (so a missing DRH_API_URL could no longer delete it). Absence
+ * would never happen again, so the scenarios would have run against an
+ * unconfigured backend.
+ *
+ * Read from the server, not this process's environment: the accuracy suite
+ * talks to a live server that may hold a different env than the test runner, so
+ * a local `process.env` check proves nothing about what that server can reach.
+ */
+export async function isWorkspaceUsable(workspaceId: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${BASE_URL}/api/v1/workspaces/${workspaceId}/runtime-status`,
+      { headers: headers() },
+    );
+    if (!res.ok) return false;
+    const status = (await res.json()) as {
+      mcp?: Array<{ connected?: boolean; toolCount?: number }>;
+    };
+    return !!status.mcp?.some((m) => m.connected && (m.toolCount ?? 0) > 0);
+  } catch {
+    return false;
+  }
+}
+
 function headers(): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
   if (API_KEY) h["Authorization"] = `Bearer ${API_KEY}`;
@@ -144,14 +203,14 @@ function makeUserMessage(text: string): unknown {
 }
 
 /** Clear the workspace's trace buffer so each run gets a fresh view. */
-async function clearTrace(): Promise<void> {
-  const url = `${BASE_URL}/api/v1/workspaces/${getWorkspaceId()}/trace?clear=1`;
+async function clearTrace(wsId: string = getWorkspaceId()): Promise<void> {
+  const url = `${BASE_URL}/api/v1/workspaces/${wsId}/trace?clear=1`;
   await fetch(url, { headers: headers() }).then((r) => r.json()).catch(() => {});
 }
 
 /** Fetch the current trace buffer for the workspace. */
-async function fetchTrace(): Promise<TelemetryEvent[]> {
-  const url = `${BASE_URL}/api/v1/workspaces/${getWorkspaceId()}/trace`;
+async function fetchTrace(wsId: string = getWorkspaceId()): Promise<TelemetryEvent[]> {
+  const url = `${BASE_URL}/api/v1/workspaces/${wsId}/trace`;
   const res = await fetch(url, { headers: headers() });
   if (!res.ok) throw new Error(`trace fetch ${res.status}`);
   return (await res.json()) as TelemetryEvent[];
@@ -222,14 +281,16 @@ function consumeSseFrames(
 /** Drive a single chat turn end-to-end and return the captured trace + parent text + stream stats. */
 export async function runPrompt(
   prompt: string,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; workspaceId?: string } = {},
 ): Promise<{
   traceEvents: TelemetryEvent[];
   durationMs: number;
   parentText: string;
   streamStats: StreamStats;
 }> {
-  await clearTrace();
+  // Target the given workspace, else the suite-resolved global (default path).
+  const wsId = opts.workspaceId ?? getWorkspaceId();
+  await clearTrace(wsId);
 
   // Internal AbortController so we can fire `reader.cancel()` on signal abort.
   // The signal alone aborts the fetch but a mid-read `ReadableStreamDefaultReader`
@@ -249,7 +310,7 @@ export async function runPrompt(
   }
 
   const start = Date.now();
-  const url = `${BASE_URL}/api/v1/workspaces/${getWorkspaceId()}/chat`;
+  const url = `${BASE_URL}/api/v1/workspaces/${wsId}/chat`;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   const cancelOnAbort = () => {
     if (reader) reader.cancel().catch(() => {});
@@ -304,7 +365,7 @@ export async function runPrompt(
   // Small grace period — onFinish callbacks may emit telemetry just after
   // the SSE stream closes. Empirically <100ms.
   await new Promise((r) => setTimeout(r, 200));
-  const traceEvents = await fetchTrace();
+  const traceEvents = await fetchTrace(wsId);
   return { traceEvents, durationMs, parentText, streamStats };
 }
 

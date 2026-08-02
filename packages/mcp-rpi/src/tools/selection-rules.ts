@@ -315,7 +315,7 @@ export function registerSelectionRuleTools(
     .max(3600)
     .default(DEFAULT_TIMEOUT_SECONDS)
     .describe(
-      `Max seconds to wait for the job to finish (default ${DEFAULT_TIMEOUT_SECONDS}s = 5 min, matches Java RPI-MCPServer). The tool polls every 1s. Raise for very large rules; the MCP client's own request timeout still applies.`,
+      `Max seconds to wait for the job to finish (default ${DEFAULT_TIMEOUT_SECONDS}s). The tool polls every 1s. The ceiling is the MCP transport, not this tool: raising it past ~240s means the transport kills the call before this budget is reached.`,
     );
 
   async function runSelectionRuleJob<TResults>(

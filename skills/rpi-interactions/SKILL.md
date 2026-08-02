@@ -13,12 +13,9 @@ mcpToolFilter:
   - get_interaction_default_metadata
   - get_interaction_workflows
   - get_interaction_workflow_activities
-  - activate_interaction_workflow
-  - run_interaction_workflow
   - get_workflow_instance_summary
   - get_interactions_workflow_status
   - get_interaction_workflow_instances
-  - control_workflow_instance
   - calculate_interaction_next_firing_times
   - get_file_info_by_id
   - get_audience_by_id
@@ -26,7 +23,7 @@ operations:
   list: [list_interactions]
   get: [list_interactions, get_interaction_by_id, get_interaction_by_name, get_interaction_activity, get_file_info_by_id, get_audience_by_id]
   metadata: [list_interactions, get_interaction_activity, get_interaction_trigger, get_interaction_available_inputs, get_interaction_default_metadata]
-  workflow: [list_interactions, get_interaction_workflows, get_interaction_workflow_activities, activate_interaction_workflow, run_interaction_workflow, get_workflow_instance_summary, get_interactions_workflow_status, get_interaction_workflow_instances, control_workflow_instance]
+  workflow: [list_interactions, get_interaction_workflows, get_interaction_workflow_activities, get_workflow_instance_summary, get_interactions_workflow_status, get_interaction_workflow_instances]
   schedule: [list_interactions, calculate_interaction_next_firing_times]
 maxSteps: 15
 tags: [rpi, interactions, workflows]
@@ -42,7 +39,7 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 
 1. **No `clientId` provided** (most common — generic requests like "list my interactions") — OMIT the `clientId` argument entirely. The MCP server applies `RPI_DEFAULT_CLIENT_ID` from environment automatically. Do NOT ask the user for a clientId; do NOT refuse to proceed.
 
-2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `e0633f26-9843-4def-b394-6791ac51e6de`) — pass it through unchanged.
+2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890`) — pass it through unchanged.
 
 3. **`clientId` provided as a non-UUID** (almost certainly a tenant *name* the parent agent forgot to resolve) — your sub-agent's tool filter does NOT include name-resolution. Stop and respond with a clear error asking the parent to redispatch via the **rpi-clients** skill to resolve the name to a UUID. Forwarding a name will fail with a 401 / "Client ID '00000000-0000-0000-0000-000000000000' not found" because RPI parses non-UUID input to the empty UUID.
 
@@ -63,17 +60,10 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 - `get_interaction_workflows` — the workflow associations attached to an interaction. Use this to find a `workflowAssociationId` before activating.
 - `get_interaction_workflow_activities` — activities inside a specific workflow association.
 
-### Activation & execution
-- `activate_interaction_workflow` — fire-and-forget kickoff. Returns the `workflowAssociationInstanceID` immediately, no polling.
-- `run_interaction_workflow` — activate and poll until the instance terminates. Returns final `status`. Use this when the user wants to wait for the result.
-
 ### Monitoring
 - `get_workflow_instance_summary` — overall summary for a single running/finished instance (needs the integer `workflowAssociationInstanceID`).
 - `get_interactions_workflow_status` — current top-level status for one or more interactions (does NOT carry historical execution data).
 - `get_interaction_workflow_instances` — list all past and current workflow instances for an interaction id, optionally with their result counts. Use this to answer "what were the counts from the last run?" — pick the most recent terminal-state instance from the returned array.
-
-### Control
-- `control_workflow_instance` — send `Play`, `Pause`, `Rollback`, or `Stop` to a running instance. Identified by integer `workflowAssociationInstanceId`.
 
 ### Scheduling
 - `calculate_interaction_next_firing_times` — compute the next N firing times for a recurrence trigger. Optional `numberOfSchedules` argument.
@@ -84,34 +74,16 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 
 `list_interactions` returns a bounded preview — **the first 10** (the tool defaults `pageSize` to 10; do **not** set it). The response still reports the total M, so append one line: *"Showing N of M. Filter by name or description substring — e.g., 'list interactions matching MW'."* Never fetch the whole set to "show all" — the top-10 preview is intentional; narrow with a filter to find specific interactions.
 
-### "Run interaction X and tell me when it's done"
-This is the canonical lifecycle.
+> **Read-only skill.** This surface inspects interactions and their workflow runs; it does not start, activate, or control workflows. If the user asks to *run / kick off / pause / stop* an interaction, say that's not available here.
 
-1. Resolve interaction `id` (`get_interaction_by_name` or `list_interactions`).
-2. Find the workflow association: `get_interaction_workflows` with the interaction `id`. If only one is returned, use its `id`. If multiple, surface the list and ask the user which.
-3. `run_interaction_workflow` with `interactionId` and `workflowAssociationId`. This activates AND polls until terminal. Pass `isSandBox: true` if the user wants a no-side-effects test.
-4. Final response includes the terminal `status`. Surface that.
-
-**Terminal statuses:**
+### Interpreting workflow-instance statuses
+Instances returned by `get_interaction_workflow_instances` carry a terminal `status`:
 - Success: `Completed`, `TestCompleted`, `Deactivated`, `RolledBack`, `Expired`.
 - Failure: `Failed`, `TestFailed`, `Stopped`, `Terminated`.
-
-### "Kick off interaction X without waiting" (fire-and-forget)
-1. Resolve `interactionId` and `workflowAssociationId` as above.
-2. `activate_interaction_workflow` — returns the `workflowAssociationInstanceID` immediately.
-3. Tell the user the instance ID and how to check status later (you can offer to poll on demand).
 
 ### "Check status of running instance N"
 1. `get_workflow_instance_summary` with `workflowAssociationInstanceId` — quick top-line status.
 2. If the user wants activity-level detail, `get_interactions_workflow_status`.
-
-### "Pause / resume / stop / rollback running instance N"
-1. `control_workflow_instance` with `workflowAssociationInstanceId` (integer) and `workflowAction`:
-   - `Pause` — temporarily halt.
-   - `Play` — resume a paused instance.
-   - `Stop` — halt for the rest of the run (terminal).
-   - `Rollback` — undo and revert (terminal).
-2. Confirm before sending `Stop` or `Rollback` — both are terminal and cannot be undone.
 
 ### "What were the counts from the last run of interaction X?" (or: existing / prior / last test counts)
 
@@ -175,17 +147,6 @@ Suppressions are an **audience-level** concept — they live in the audience's b
 
 1. **Name the audience** the interaction uses — resolve it via the Batch audience activity exactly as in "What audience does interaction X use?" above (`get_interaction_activity` → `dataflowTemplateName`/`dataflowTemplateID`). This part you can and should answer directly.
 2. **Do NOT enumerate the audience's suppression *rules* from here.** Reading the nested suppression-block detail from the interaction vantage is unreliable — and a confident-but-wrong answer, especially a false "no suppressions are applied," is dangerous on a compliance control. **Never assert which suppression rules exist — or that there are zero — from this skill.** Instead, name the audience and direct the suppression-rule detail to the **audiences** capability, which reads audience internals reliably: e.g. *"Interaction X uses audience 'Advanced Rearranging' — its suppression rules are read via the audiences skill."* Surface the audience name (never a bare GUID); let the audiences skill enumerate the actual rules.
-
-## `activate_*` vs `run_*` — pick the right one
-
-- **`run_interaction_workflow`** — single tool call, blocks on polling, returns final status. Default choice when the user asked "run X."
-- **`activate_interaction_workflow`** — returns instantly, gives you the instance ID. Use when the user said "start X but don't wait" or you expect a long run.
-
-The Java MCP server's older `interactionExecuteWorkflow` semantics map to `run_interaction_workflow`.
-
-## Sandbox mode
-
-Both `activate_interaction_workflow` and `run_interaction_workflow` accept `isSandBox: true` for a no-production-effects test. Default is real execution. **Confirm with the user before running in production mode** if the interaction has external side effects (sends to channels, exports to systems).
 
 ## Response discipline — act, don't punt-loop
 

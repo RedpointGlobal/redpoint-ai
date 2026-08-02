@@ -3,6 +3,7 @@ export { SkillRegistry } from "./registry.js";
 export { createSkillRouterTool, buildRouterSystemPrompt } from "./router.js";
 export { loadSkillFromFile, loadSkillsFromDirectory } from "./loader.js";
 export { cachingOptions } from "./caching-options.js";
+export { GROUNDING_PREAMBLE } from "./grounding-preamble.js";
 export {
   pruneMessageHistory,
   estimateTokens,

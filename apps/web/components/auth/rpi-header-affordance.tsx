@@ -10,8 +10,8 @@
  *
  * MVP simplification: one click = full sign-out. A future PR will add a
  * dropdown that distinguishes "Disconnect RPI Account" (clear rpi.* from
- * JWT, keep web-app session) from "Sign out" (full NextAuth signOut) per
- * cousin's flag #3 on the plan. Today, full sign-out is fine because the
+ * JWT, keep web-app session) from "Sign out" (full NextAuth signOut).
+ * Today, full sign-out is fine because the
  * web app's only auth IS the RPI auth — there's no separate "web-app
  * session" to preserve when disconnecting RPI.
  */

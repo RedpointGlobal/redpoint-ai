@@ -3,6 +3,15 @@
 # diffs when files on disk use LF (the canonical state for this repo).
 * text=auto eol=lf
 
+# Windows batch files are the one exception: cmd.exe expects CRLF, and LF-only .bat is
+# the classic source of "The system cannot find the batch label" on the goto/label
+# constructs the rep launchers use. Git still stores LF, so the repo stays normalized and
+# no committed blob changes — only the working tree, and therefore the built zip. eol=crlf
+# is unconditional, so a Linux build box produces the same bytes a Windows one does.
+# NOTE: this cannot reach the standalone launchers, which are generated at build time —
+# see the crlf() helper in packages/mcp-*/scripts/copy-dist-templates.ts.
+*.bat text eol=crlf
+
 # Common binary types — never normalize.
 *.png binary
 *.jpg binary

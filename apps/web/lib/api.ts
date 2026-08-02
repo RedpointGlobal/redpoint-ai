@@ -19,6 +19,11 @@ export interface Thread {
 
 async function api<T>(path: string, options?: RequestInit, token?: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
+    // Never cache API reads: in a production Next build, server-component fetches
+    // are cached by default, which froze the landing page's workspace list at its
+    // first render (during seeding → 1 workspace) and permanently redirected past
+    // the multi-workspace picker. Live config/workspace data must always be fresh.
+    cache: "no-store",
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -65,18 +70,6 @@ export async function createThread(
   });
 }
 
-export async function updateWorkspace(id: string, data: Record<string, unknown>): Promise<Workspace> {
-  return api(`/api/v1/workspaces/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-}
-
-export async function listProviders(): Promise<Array<{ type: string; name: string; configured: boolean }>> {
-  return api("/api/v1/providers");
-}
-
 export interface WorkspaceTool {
   name: string;
   description: string;
@@ -106,6 +99,12 @@ export interface RuntimeStatus {
     /** Auth outcome of the probe — "none" (no auth required or sent),
      *  "authenticated" (Bearer accepted), "failed" (401/Unauthorized). */
     auth: "none" | "authenticated" | "failed";
+    /** Single most-obstructive condition, computed server-side. The UI maps this
+     *  to copy and never inspects `error` — wording is the card's business, the
+     *  classification is the server's. */
+    status: "ok" | "not_configured" | "unauthorized" | "unreachable" | "no_tools";
+    /** Env var to name when status is not_configured. */
+    missingVar?: string;
     error?: string;
   }>;
   skills: {

@@ -34,7 +34,12 @@
  * identically on Linux, macOS, Windows, and WSL.
  */
 
-import { mkdirSync, writeFileSync, existsSync, copyFileSync, chmodSync } from "fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, chmodSync } from "fs";
+
+/** Normalize to CRLF for Windows batch files. Collapses \r?\n first, so re-running cannot
+ *  double-convert an already-CRLF string. */
+const crlf = (s: string) => s.replace(/\r?\n/g, "\r\n");
+
 import { join } from "path";
 
 const here = import.meta.dir;
@@ -202,7 +207,7 @@ Troubleshooting
   file isn't in the same folder as the binary.
 
 - "Address already in use" on port 3002 — another process is using that
-  port. Set \`MCP_HTTP_PORT\` in \`.env\` to pick a different one.
+  port. Set \`RPI_MCP_HTTP_PORT\` in \`.env\` to pick a different one.
 
 - 401 from RPI on tool calls — double-check your \`RPI_OAUTH_CLIENT_ID\`,
   \`RPI_OAUTH_CLIENT_SECRET\`, and proxy user credentials against your RPI
@@ -226,6 +231,113 @@ Troubleshooting
 // .env.example — same content for every platform.
 // ---------------------------------------------------------------------------
 
+/**
+ * Quick-start shipped alongside the binary. Covers BOTH standalone servers
+ * (RPI :3002 and DRH :3003) on purpose — a rep may take either or both, and a
+ * single doc beats two that drift apart. Kept identical in the mcp-drh copy of
+ * this script; edit both together.
+ *
+ * No macOS: build:all produces linux + windows only (the macos targets are
+ * disabled in package.json). Documenting a zip we do not produce is how the
+ * previous version of this doc sent people looking for files that never existed.
+ */
+const QUICK_START_NAME = "_rp-ai_quick-start_mcp-server.txt";
+const quickStartContent = `RedpointAI — MCP Server Quick Start
+===================================
+
+Two standalone MCP servers ship separately. Take one or both — they use
+different ports, so they can run at the same time.
+
+  Redpoint Interaction (RPI)   47 tools   localhost:3002
+  Data Readiness Hub  (DRH)    93 tools   localhost:3003
+
+
+(1) Download the zip for your OS:
+
+    Windows x64    _rp-rpi_mcp-server_windows-x64_<version>.zip
+                   _rp-drh_mcp-server_windows-x64_<version>.zip
+    Linux x64      _rp-rpi_mcp-server_linux-x64_<version>.zip
+                   _rp-drh_mcp-server_linux-x64_<version>.zip
+
+    The version in the filename matches the RedpointAI web build, so all
+    three artifacts in a shared folder state the same number.
+
+
+(2) Extract it:
+
+    Windows:  right-click the zip -> Extract All...
+    Linux:    unzip _rp-rpi_mcp-server_linux-x64_<version>.zip
+
+
+(3) Open the extracted folder. You'll see:
+
+    - The binary     rp-rpi-mcp-windows.exe  /  rp-rpi-mcp-linux
+                     rp-drh-mcp-windows.exe  /  rp-drh-mcp-linux
+    - A launcher     Start MCP Server (Windows).bat  /  (Linux).sh
+    - .env           already filled in - nothing to configure
+    - README.txt
+
+
+(4) Double-click the launcher:
+
+    Windows:  Start MCP Server (Windows).bat
+    Linux:    Start MCP Server (Linux).sh
+
+
+(5) The server is listening at:
+
+    RPI    http://localhost:3002/mcp
+    DRH    http://localhost:3003/mcp
+
+    Point your MCP client at that URL.
+
+
+(6) When you're done: close the launcher window (or Ctrl+C if it is
+    attached to a terminal).
+
+
+------------------------------------------------------------------------
+VERIFY / TROUBLESHOOT
+------------------------------------------------------------------------
+
+Is it up?  Open the health URL in a browser:
+
+    http://localhost:3002/health      (RPI)
+    http://localhost:3003/health      (DRH)
+
+  {"status":"ok", ...}
+      Running and configured.
+
+  {"status":"ok", ..., "mcp":"degraded", "missing":["..."]}
+      Running, but a value in .env is missing. The "missing" list names
+      exactly which one. Fix it in .env and restart the launcher.
+
+  Nothing answers at all
+      The server is not running. Re-run the launcher and read the window
+      before it closes.
+
+  Port already in use
+      Something else holds 3002/3003. Close it, or change the port in .env
+      (RPI_MCP_HTTP_PORT for RPI, DRH_MCP_HTTP_PORT for DRH) and point your
+      client at the new port.
+
+
+------------------------------------------------------------------------
+POINTING AT YOUR OWN INSTANCE
+------------------------------------------------------------------------
+
+The shipped .env is preconfigured against a Redpoint sandbox. To use your
+own environment, edit .env and restart the launcher:
+
+    RPI    RPI_INTEGRATION_API_URL, RPI_OAUTH_CLIENT_ID,
+           RPI_OAUTH_CLIENT_SECRET, RPI_DEFAULT_CLIENT_ID
+    DRH    DRH_API_URL, DRH_DEFAULT_CLIENT_ID,
+           DRH_PROXY_USER, DRH_PROXY_PASS
+
+The .env carries working credentials — treat the extracted folder as
+sensitive and do not repost it.
+`;
+
 const envExampleContent = `# RPI MCP Server — standalone distribution
 #
 # Copy this file to \`.env\` and fill in your values.
@@ -243,8 +355,6 @@ RPI_OAUTH_CLIENT_SECRET=
 # Used as a fallback when a tool call doesn't carry an explicit clientId.
 RPI_DEFAULT_CLIENT_ID=
 
-# HTTP port the MCP server listens on (default 3002).
-MCP_HTTP_PORT=3002
 
 # Inbound token validation. Keep \`false\` for local dev; set \`true\` in
 # production to require callers to pass an RPI-valid Bearer token.
@@ -329,12 +439,47 @@ let envCopied = 0;
 const rootEnv = join(repoRoot, ".env");
 const hasRootEnv = existsSync(rootEnv);
 
+/**
+ * Build the shipped `.env` as a DOMAIN-SCOPED slice of the developer's root .env
+ * — the single source of truth for both keys and values.
+ *
+ * The RPI standalone server ships only its own product's config: keys matching
+ * /^RPI_/ plus the shared AUTH_REQUIRED. Everything else in root .env is excluded
+ * by construction — least privilege — so a single-purpose tool folder never
+ * carries a secret it doesn't use: the other product's creds (DRH_ keys), the
+ * app's LLM provider keys (AZURE_ keys), AUTH_SECRET, dev-only tooling secrets
+ * (SEMGREP), COMPOSE_PROJECT_NAME. `.env.example` above is documentation only;
+ * it is NOT the source of the shipped `.env`.
+ */
+const DOMAIN_PREFIX = "RPI_";
+const SHARED_KEYS = new Set(["AUTH_REQUIRED"]);
+function buildShippedEnv(): string {
+  if (!hasRootEnv) return "";
+  const KV = /^([A-Za-z_][A-Za-z0-9_]*)=/;
+  const out: string[] = [];
+  for (const line of readFileSync(rootEnv, "utf8").split(/\r?\n/)) {
+    const m = line.match(KV);
+    if (!m) continue;
+    const key = m[1];
+    if (key.startsWith(DOMAIN_PREFIX) || SHARED_KEYS.has(key)) out.push(line);
+  }
+  return out.join("\n") + "\n";
+}
+
 for (const p of platforms) {
   const subdir = join(dst, p.subdir);
   if (!existsSync(subdir)) mkdirSync(subdir, { recursive: true });
 
   const launcherPath = join(subdir, p.launcher);
-  writeFileSync(launcherPath, p.launcherContent);
+  // Windows batch launchers ship CRLF: cmd.exe expects it, and LF-only .bat is the classic
+  // source of "The system cannot find the batch label" on goto/label constructs. Gated on the
+  // .bat extension, NOT applied at the write call — the Linux .sh goes through this same
+  // writeFileSync, and CRLF there yields `bad interpreter: /bin/bash^M`. The .gitattributes
+  // *.bat rule cannot reach these files: they are generated here, never tracked.
+  writeFileSync(
+    launcherPath,
+    p.launcher.endsWith(".bat") ? crlf(p.launcherContent) : p.launcherContent,
+  );
   if (p.launcherIsExecutable) chmodSync(launcherPath, 0o755);
 
   writeFileSync(
@@ -344,12 +489,14 @@ for (const p of platforms) {
 
   writeFileSync(join(subdir, ".env.example"), envExampleContent);
 
-  // Dev convenience: copy root .env into each subdir so binaries can launch
-  // immediately after `bun run build:all` without manual post-build steps.
-  // .env is gitignored — no leak risk via git. release:zip will exclude it
-  // from the published zips.
+  writeFileSync(join(subdir, QUICK_START_NAME), quickStartContent);
+
+  // Ship a REAL, working .env. These binaries go to internal reps, not a public
+  // registry — the point is a folder that runs on double-click with nothing to
+  // configure, matching the docker bundle. Derived, not copied: see
+  // buildShippedEnv() for why a wholesale copy is the wrong move.
   if (hasRootEnv) {
-    copyFileSync(rootEnv, join(subdir, ".env"));
+    writeFileSync(join(subdir, ".env"), buildShippedEnv());
     envCopied += 1;
   }
 
@@ -358,7 +505,7 @@ for (const p of platforms) {
 
 if (hasRootEnv) {
   console.log(
-    `[copy-dist-templates] Wrote ${platformsWritten} platform bundle(s) + copied root .env into ${envCopied} subdir(s) (dev convenience; release:zip excludes .env)`,
+    `[copy-dist-templates] Wrote ${platformsWritten} platform bundle(s) + wrote domain-scoped .env into ${envCopied} subdir(s) (scoped slice of root .env; shipped in the zip)`,
   );
 } else {
   console.log(

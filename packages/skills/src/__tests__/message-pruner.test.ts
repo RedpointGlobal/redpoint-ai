@@ -328,7 +328,7 @@ describe("pruneMessageHistory — estimator both-bounds calibration", () => {
                 skillName: "rpi-clients",
                 skillType: "action",
                 result:
-                  "Here is the list of clients (tenants) you have on the RPI cluster:\n\n1. **CDP-dev-e0633f**  \n   - ID: e0633f26-9843-4def-b394-6791ac51e6de  \n   - Description: CDP-dev-e0633f",
+                  "Here is the list of clients (tenants) you have on the RPI cluster:\n\n1. **Acme-Retail-Demo**  \n   - ID: a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890  \n   - Description: Acme-Retail-Demo",
                 toolCallCount: 0,
                 stepCount: 2,
               },
@@ -472,9 +472,9 @@ describe("pruneMessageHistory — production-pipeline ground-truth (Step 2A)", (
   function buildLiveShapeUIMessages(): UIMessage[] {
     const skillResult =
       "Here is the list of clients (tenants) on your RPI cluster:\n\n" +
-      "1. **CDP-dev-e0633f**\n" +
-      "   - ID: `e0633f26-9843-4def-b394-6791ac51e6de`\n" +
-      "   - Description: CDP-dev-e0633f\n\n" +
+      "1. **Acme-Retail-Demo**\n" +
+      "   - ID: `a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890`\n" +
+      "   - Description: Acme-Retail-Demo\n\n" +
       "You can use the ID for any specific operations or further inquiries related to this client.";
 
     return [
@@ -513,8 +513,8 @@ describe("pruneMessageHistory — production-pipeline ground-truth (Step 2A)", (
           {
             type: "text",
             text:
-              "List audiences for client e0633f26-9843-4def-b394-6791ac51e6de " +
-              "(CDP-dev-e0633f) with names starting with 'JB' and counts greater than zero.",
+              "List audiences for client a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890 " +
+              "(Acme-Retail-Demo) with names starting with 'JB' and counts greater than zero.",
           },
         ],
       },

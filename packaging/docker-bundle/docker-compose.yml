@@ -1,0 +1,104 @@
+# RedpointAI — rep double-click bundle (PREBUILT images, NO build, NO registry).
+# Images are loaded from rp-ai-images.tar by start_redpoint-ai.bat; env comes from
+# the single ./.env in this folder. Do not run this from the source repo — use the
+# dev docker-compose.yml there. Reps: just double-click start_redpoint-ai.bat.
+services:
+  server:
+    image: rp-ai-server:__VERSION__
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - AUTH_REQUIRED=false
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_RESOURCE_NAME=${AZURE_OPENAI_RESOURCE_NAME:-}
+      - AZURE_OPENAI_DEPLOYMENT_ID=${AZURE_OPENAI_DEPLOYMENT_ID:-}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-}
+      - SEED_RPI_MCP_URL=http://mcp-rpi:3002/mcp
+      - DRH_MCP_URL=http://mcp-drh:3003/mcp
+      - DRH_API_URL=${DRH_API_URL:-}
+      - DB_FILE_NAME=/app/data/redpoint-ai.db
+    volumes:
+      # Named volume only (SQLite persistence). NO ./skills bind-mount — the
+      # skills are baked into the image; a bind-mount would blank them out.
+      - server-data:/app/data
+    healthcheck:
+      test: ["CMD", "bun", "--eval", "fetch('http://localhost:3000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+  web:
+    image: rp-ai-web:__VERSION__
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://server:3000}
+      - AUTH_REQUIRED=false
+      - AUTH_SECRET=${AUTH_SECRET:-changeme-generate-with-openssl-rand-base64-32}
+      - AUTH_TRUST_HOST=true
+      - AUTH_URL=${AUTH_URL:-http://localhost:3001}
+      - RPI_INTEGRATION_API_URL=${RPI_INTEGRATION_API_URL:-}
+      - RPI_OAUTH_CLIENT_ID=${RPI_OAUTH_CLIENT_ID:-}
+      - RPI_OAUTH_CLIENT_SECRET=${RPI_OAUTH_CLIENT_SECRET:-}
+      - RPI_DEFAULT_CLIENT_ID=${RPI_DEFAULT_CLIENT_ID:-}
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3001/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+
+  mcp-rpi:
+    image: rp-ai-mcp-rpi:__VERSION__
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      - RPI_MCP_HTTP_PORT=3002
+      - AUTH_REQUIRED=false
+      - RPI_INTEGRATION_API_URL=${RPI_INTEGRATION_API_URL:-}
+      - RPI_OAUTH_CLIENT_ID=${RPI_OAUTH_CLIENT_ID:-}
+      - RPI_OAUTH_CLIENT_SECRET=${RPI_OAUTH_CLIENT_SECRET:-}
+      - RPI_DEFAULT_CLIENT_ID=${RPI_DEFAULT_CLIENT_ID:-}
+      - RPI_PROXY_USER=${RPI_PROXY_USER:-}
+      - RPI_PROXY_PASS=${RPI_PROXY_PASS:-}
+      - RPI_PROXY_ENABLED=${RPI_PROXY_ENABLED:-}
+    # No healthcheck: the slim runtime (debian:12-slim + compiled binary only) has
+    # no bun/curl/wget to probe /health, and nothing depends_on this service being
+    # healthy. Container liveness is real regardless — a crashed process exits it.
+
+  mcp-drh:
+    image: rp-ai-mcp-drh:__VERSION__
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      - DRH_MCP_HTTP_PORT=3003
+      - AUTH_REQUIRED=false
+      - DRH_API_URL=${DRH_API_URL:-}
+      - DRH_DEFAULT_CLIENT_ID=${DRH_DEFAULT_CLIENT_ID:-}
+      - DRH_DEFAULT_DATABASE_ID=${DRH_DEFAULT_DATABASE_ID:-}
+      - DRH_PROXY_USER=${DRH_PROXY_USER:-}
+      - DRH_PROXY_PASS=${DRH_PROXY_PASS:-}
+      - DRH_PROXY_ENABLED=${DRH_PROXY_ENABLED:-}
+      - DRH_TOKEN_TTL_SECONDS=${DRH_TOKEN_TTL_SECONDS:-}
+      - DRH_CORS_ORIGINS=${DRH_CORS_ORIGINS:-}
+    # No healthcheck: see mcp-rpi above — slim runtime has no probe tool and nothing
+    # depends_on this being healthy; a crashed process still exits the container.
+
+volumes:
+  server-data:

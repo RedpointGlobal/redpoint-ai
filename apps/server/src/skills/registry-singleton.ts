@@ -12,18 +12,28 @@ const SKILLS_DIR = join(__dirname, "../../../../skills");
  * Lives outside the chat route so other routes (workspaces runtime-status,
  * future endpoints) can read the registry without dragging chat.ts and its
  * heavy import graph (orchestrator, hallucination detector, metrics) along.
+ *
+ * We cache the load *promise*, not the registry, so concurrent first-callers
+ * all await the same fully-populated result. Caching a mutable registry that
+ * is assigned before its `await loadSkillsFromDirectory(...)` resolves let a
+ * second caller arriving mid-load observe an EMPTY registry — which surfaced
+ * as a spurious "category-discovery" tier in runtime-status (0 skills → no
+ * dispatchable skill → Tier 2) that stuck for the 30s status cache TTL.
  */
-let skillRegistry: SkillRegistry | null = null;
-export async function getSkillRegistry(): Promise<SkillRegistry> {
-  if (!skillRegistry) {
-    skillRegistry = new SkillRegistry();
-    try {
-      const skills = await loadSkillsFromDirectory(SKILLS_DIR);
-      skills.forEach((s) => skillRegistry!.register(s));
-      logger.info({ count: skills.length, dir: SKILLS_DIR }, "Skills loaded");
-    } catch {
-      logger.warn({ dir: SKILLS_DIR }, "No skills directory found, continuing without skills");
-    }
+let skillRegistryPromise: Promise<SkillRegistry> | null = null;
+export function getSkillRegistry(): Promise<SkillRegistry> {
+  if (!skillRegistryPromise) {
+    skillRegistryPromise = (async () => {
+      const registry = new SkillRegistry();
+      try {
+        const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+        skills.forEach((s) => registry.register(s));
+        logger.info({ count: skills.length, dir: SKILLS_DIR }, "Skills loaded");
+      } catch {
+        logger.warn({ dir: SKILLS_DIR }, "No skills directory found, continuing without skills");
+      }
+      return registry;
+    })();
   }
-  return skillRegistry;
+  return skillRegistryPromise;
 }

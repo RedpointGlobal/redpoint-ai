@@ -148,9 +148,13 @@ describe("tools/list filtering via live server", () => {
     );
   }
 
-  it("returns all 47 tools with no filter", async () => {
+  // 47 tools are registered; 5 writes are gated (disabled) at construction, so
+  // tools/list — which the SDK filters on `enabled` — exposes 42. The explicit
+  // gate checks (absent from list + rejected on call) live in
+  // write-enforcement.test.ts.
+  it("returns 42 enabled tools with no filter (5 write tools gated)", async () => {
     const result = await callToolsList();
-    expect(result.tools.length).toBe(47);
+    expect(result.tools.length).toBe(42);
   });
 
   it("returns 1 file-system tool when category=file-system", async () => {
@@ -160,11 +164,11 @@ describe("tools/list filtering via live server", () => {
     expect(names).toEqual(["get_file_info_by_id"]);
   });
 
-  it("returns 2 folder tools when category=folders", async () => {
+  it("returns 1 folder tool when category=folders (create_folder gated)", async () => {
     const result = await callToolsList({ category: "folders" });
-    expect(result.tools.length).toBe(2);
+    expect(result.tools.length).toBe(1);
     const names = result.tools.map((t) => t.name).sort();
-    expect(names).toEqual(["create_folder", "list_folders"]);
+    expect(names).toEqual(["list_folders"]);
   });
 
   it("returns 8 selection rule tools when category=selection-rules", async () => {
@@ -183,14 +187,14 @@ describe("tools/list filtering via live server", () => {
     ]);
   });
 
-  it("returns 16 interaction tools when category=interactions", async () => {
+  it("returns 13 interaction tools when category=interactions (3 writes gated)", async () => {
     const result = await callToolsList({ category: "interactions" });
-    expect(result.tools.length).toBe(16);
+    expect(result.tools.length).toBe(13);
     const names = result.tools.map((t) => t.name).sort();
+    // activate_interaction_workflow, control_workflow_instance, and
+    // run_interaction_workflow are gated writes — absent here.
     expect(names).toEqual([
-      "activate_interaction_workflow",
       "calculate_interaction_next_firing_times",
-      "control_workflow_instance",
       "get_interaction_activity",
       "get_interaction_available_inputs",
       "get_interaction_by_id",
@@ -203,7 +207,6 @@ describe("tools/list filtering via live server", () => {
       "get_interactions_workflow_status",
       "get_workflow_instance_summary",
       "list_interactions",
-      "run_interaction_workflow",
     ]);
   });
 
@@ -218,9 +221,9 @@ describe("tools/list filtering via live server", () => {
     ]);
   });
 
-  it("returns only audience tools when category=audiences", async () => {
+  it("returns only audience tools when category=audiences (run_audience_test_workflow gated)", async () => {
     const result = await callToolsList({ category: "audiences" });
-    expect(result.tools.length).toBe(13);
+    expect(result.tools.length).toBe(12);
     for (const t of result.tools) {
       expect(t._meta?.category).toBe("audiences");
     }
@@ -279,16 +282,18 @@ describe("tools/list filtering via live server", () => {
     const fileSystem = categories.find((c) => c.name === "file-system");
     expect(fileSystem!.estimatedToolCount).toBe(1);
 
+    // estimatedToolCount reflects ENABLED tools — the gate runs before
+    // installToolFilter counts them, so gated writes are excluded.
     const audiences = categories.find((c) => c.name === "audiences");
     expect(audiences).toBeDefined();
-    expect(audiences!.estimatedToolCount).toBe(13);
+    expect(audiences!.estimatedToolCount).toBe(12); // 13 registered − 1 gated write
     expect(audiences!.description.length).toBeGreaterThan(0);
 
     const admin = categories.find((c) => c.name === "admin");
     expect(admin!.estimatedToolCount).toBe(3);
 
     const interactions = categories.find((c) => c.name === "interactions");
-    expect(interactions!.estimatedToolCount).toBe(16);
+    expect(interactions!.estimatedToolCount).toBe(13); // 16 registered − 3 gated writes
 
     const filterParameter = listTools!.filterParameter as {
       name: string;

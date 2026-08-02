@@ -2,35 +2,19 @@
 
 ## Overview
 
-RedpointAI is an open-source connector that lets customers interact with their existing RedPoint Interaction (RPI) platform using natural language through a chat interface. It is published and maintained by Redpoint Global Inc. under the [Apache License 2.0](./LICENSE).
+RedpointAI is an open-source connector that lets customers interact with their existing Redpoint Interaction (RPI) platform using natural language through a chat interface. It is published and maintained by Redpoint Global Inc. under the [Apache License 2.0](./LICENSE).
 
 This document describes how to report security vulnerabilities, how Redpoint responds to them, and the security responsibilities that apply to customers who deploy RedpointAI in their own environments.
 
 ## Supported Versions
 
-Security updates are provided for the following versions:
-
-| Version                 | Supported                  |
-| ----------------------- | -------------------------- |
-| Latest stable release   | ✅ Yes                     |
-| Previous major release  | ✅ Yes (critical fixes only) |
-| Older releases          | ❌ No                      |
-
-We recommend running the latest stable release. Security advisories are published via [GitHub Security Advisories](https://docs.github.com/en/code-security/security-advisories).
+This repository is published as source, as-is, under the Apache License 2.0. Security fixes land on the default branch; there are no maintenance branches or backports. Run the current state of the default branch. Security advisories, when issued, are published via [GitHub Security Advisories](https://docs.github.com/en/code-security/security-advisories).
 
 ## Reporting a Vulnerability
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Redpoint operates a Security Response Center for coordinated vulnerability disclosure. If you believe you have found a security vulnerability in RedpointAI, please report it through one of the following private channels.
-
-### Option 1 — GitHub Private Vulnerability Reporting (Preferred)
-
-Use GitHub's native private reporting feature: **Security → Advisories → Report a vulnerability**. This keeps disclosure confidential while allowing Redpoint to track, triage, and coordinate a response without public exposure.
-
-### Option 2 — Security Response Center Email
-
-If you cannot use GitHub's private reporting feature, contact us directly:
+Redpoint operates a Security Response Center for coordinated vulnerability disclosure. If you believe you have found a security vulnerability in RedpointAI, report it privately by email:
 
 📧 **secure@redpointglobal.com**
 
@@ -41,29 +25,31 @@ Please include in your report:
 - The version of RedpointAI affected
 - Any relevant environment details (OS, deployment model, dependencies)
 
-### Response SLAs
+### Response Process
 
-| Stage                                          | Target                                                              |
+All stages are handled through the Security Response Center; severity drives prioritization. No service-level commitment is expressed or implied.
+
+| Stage                                          | Channel                                                             |
 | ---------------------------------------------- | ------------------------------------------------------------------- |
-| Acknowledgement of receipt                     | 3 business days                                                     |
-| Initial triage and severity assessment         | 10 business days                                                    |
-| Patch or mitigation for Critical/High findings | 30 days where technically feasible                                  |
-| Coordinated public disclosure                  | Upon patch availability, or 90 days from report, whichever is first |
+| Report and acknowledgement                     | **secure@redpointglobal.com**                                        |
+| Triage and severity assessment                 | **secure@redpointglobal.com** (reporter kept in the loop)            |
+| Fix or mitigation for Critical/High findings   | Updated source on the default branch + advisory                     |
+| Coordinated public disclosure                  | [GitHub Security Advisories](https://docs.github.com/en/code-security/security-advisories) |
 
-We ask that reporters follow coordinated disclosure practices and refrain from publishing vulnerability details until a patch has been released or the 90-day window has elapsed.
+We ask that reporters follow coordinated disclosure practices and refrain from publishing vulnerability details until a fix is available or 90 days have elapsed from the report, whichever comes first.
 
 ## Shared Responsibility Model
 
-RedpointAI is **customer-hosted software**. Customers download and run it themselves, against their own RPI instance, on their own infrastructure. Redpoint does not host, operate, or have visibility into customer deployments.
+RedpointAI is **customer-hosted software**. Customers build it from source and run it themselves, against their own RPI instance, on their own infrastructure. Redpoint does not host, operate, or have visibility into customer deployments.
 
 | Security Area              | Redpoint Responsibility                                                                  | Customer Responsibility                                                                                  |
 | -------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | RedpointAI source code     | Publish patches and security advisories for vulnerabilities in RedpointAI code           | Apply published updates in a timely manner                                                               |
-| Bundled dependencies       | Monitor and update bundled dependencies (e.g., Vercel AI SDK); publish updated releases  | Monitor Redpoint security advisories; update deployed versions                                           |
+| Bundled dependencies       | Address vulnerabilities in bundled dependencies in the published source as they are identified | Monitor Redpoint security advisories; update deployed versions                                           |
 | Deployment infrastructure  | Not applicable — Redpoint does not host customer deployments                             | Secure the infrastructure on which RedpointAI is deployed (network exposure, access controls, TLS)       |
 | RPI API credentials        | Not applicable — credentials are customer-managed                                        | Protect RPI API credentials used by RedpointAI; rotate upon suspected compromise                         |
 | Data handled by RedpointAI | Not applicable — customer data stays in the customer's RPI environment                   | Ensure RedpointAI is deployed with appropriate access controls to RPI data                               |
-| AI model interactions      | Publish guidance on prompt-injection risk and input-validation best practices            | Implement appropriate controls for AI model usage in your environment                                    |
+| AI model interactions      | Document known AI-specific considerations in this policy (see below)                     | Implement appropriate controls for AI model usage in your environment                                    |
 | Security monitoring        | Not applicable for customer-hosted deployments                                           | Monitor the RedpointAI deployment for anomalous activity                                                 |
 
 > **In plain terms:** Redpoint is responsible for the security of the code we publish. You are responsible for how and where you deploy it.
@@ -116,7 +102,7 @@ The following are outside the scope of this security policy:
 - Vulnerabilities in the underlying RPI platform — report these through your Redpoint support channel
 - Vulnerabilities in the Vercel AI SDK or other third-party dependencies — report these to the respective upstream maintainers
 - Security issues arising from customer misconfiguration or failure to follow the hardening guidance above
-- RedPoint Interaction (RPI) product code, algorithms, or proprietary systems — these are not part of this repository
+- Redpoint Interaction (RPI) product code, algorithms, or proprietary systems — these are not part of this repository
 
 ## License and Trademark
 
@@ -127,4 +113,4 @@ RedpointAI is licensed under the [Apache License 2.0](./LICENSE). This license d
 **Security Response Center:** secure@redpointglobal.com
 Redpoint Global Inc., 34 Washington Street Suite 205, Wellesley Hills, MA 02481
 
-For non-security issues, please use the standard [GitHub Issues](https://github.com/RedPointGlobal/redpoint-ai/issues) tracker.
+For non-security issues, email **support@redpointglobal.com** (see [SUPPORT.md](./SUPPORT.md)).

@@ -9,7 +9,7 @@ tags: [rpi, foundation, mcp]
 
 # RPI MCP Foundation
 
-You have access to RedPoint Interaction (RPI) via an MCP server (`rpi-mcp-server`) that exposes tools across audiences, interactions, selection rules, folders, clients, admin, and auth. Tools are namespaced as `rpi__<tool_name>`. Discover the actual tools available at runtime via the connected MCP server.
+You have access to Redpoint Interaction (RPI) via an MCP server (`rpi-mcp-server`) that exposes tools across audiences, interactions, selection rules, folders, clients, admin, and auth. Tools are namespaced as `rpi__<tool_name>`. Discover the actual tools available at runtime via the connected MCP server.
 
 This guidance applies to **every** RPI tool call. Read it once; apply it everywhere.
 

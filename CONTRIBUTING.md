@@ -1,6 +1,6 @@
 # Contributing to RedpointAI
 
-Thanks for your interest in RedpointAI. Whether you're filing an issue, suggesting an improvement, or sending a pull request — your contributions help us build a better open-source AI agent platform for the RPI ecosystem.
+Thanks for your interest in RedpointAI. Whether you're reporting a bug, suggesting an improvement, or sending a pull request — your contributions help us build a better open-source AI agent platform for the RPI ecosystem.
 
 Before opening a PR, please read through this guide. Pull requests that don't follow the process below may be closed without review.
 
@@ -9,40 +9,38 @@ Before opening a PR, please read through this guide. Pull requests that don't fo
 RedpointAI is an opinionated, batteries-included agent platform — server, web UI, and MCP server in one monorepo. We welcome contributions across the stack, but please keep these principles in mind:
 
 - **Stay focused on the RPI use case.** Features and skills that meaningfully help users interact with their RPI platform via natural language belong here. Generic agent-framework features that don't tie back to RPI workflows generally don't.
-- **Prefer existing patterns.** Reuse the skill router, MCP tool conventions, and shared Zod schemas in `packages/shared/` rather than introducing parallel mechanisms. If you're not sure what the established pattern is, ask in an issue first.
+- **Prefer existing patterns.** Reuse the skill router, MCP tool conventions, and shared Zod schemas in `packages/shared/` rather than introducing parallel mechanisms. If you're not sure what the established pattern is, reach out at support@redpointglobal.com first.
 - **Small, targeted PRs.** One concern per PR. Mixed refactors and feature additions are hard to review and slow to land.
 
-If you're unsure whether a contribution fits, **open an issue first** to discuss before writing the code.
+If you're unsure whether a contribution fits, **reach out at support@redpointglobal.com first** to discuss before writing the code.
 
 ## Reporting bugs and requesting features
 
-Before filing a new issue, please search the existing [issues](https://github.com/RedPointGlobal/redpoint-ai/issues) — there's a good chance someone has already raised it. If you find a match, react with thumbs-up and add a comment with your specific scenario. That helps us prioritize by community impact.
+Email **support@redpointglobal.com** with your bug or feature request. Include steps to reproduce (for bugs), the build version shown in the app's Config tab, and what you expected to happen. The team will review and either accept, request more information, or decline with reasoning.
 
-If your bug or feature request isn't already tracked, [open a new issue](https://github.com/RedPointGlobal/redpoint-ai/issues/new). Maintainers will review and either accept, request more information, or decline with reasoning.
+## Writing a good report
 
-## Creating issues
-
-When creating an issue:
+When emailing a bug or feature request:
 
 - **Do** use a clear, descriptive title.
 - **Do** describe the actual vs. expected behavior, with steps to reproduce for bugs.
 - **Do** include version information (Bun, Node, OS, RedpointAI commit) for bug reports.
 - **Do** describe the user-facing motivation for feature requests, not just the implementation idea.
 - **Do not** include secrets, API keys, RPI tenant identifiers, or any data covered by your organization's data-handling policy. Redact before posting.
-- **Do not** report security vulnerabilities in public issues — see [Security](#security) below.
+- **Do not** report security vulnerabilities through the support channel — see [Security](#security) below.
 
 ## Development Setup
 
-See [Getting Started](docs/getting-started.md) for the full walkthrough. Quick form — two commands from a fresh shell:
+See [Getting Started](docs/getting-started.md) for the full walkthrough. Quick form:
 
 
 ```bash
 curl -fsSL https://bun.sh/install | bash    # one-time, if Bun missing
-git clone https://github.com/RedPointGlobal/redpoint-ai.git
+git clone https://github.com/RedpointGlobal/redpoint-ai.git
 cd redpoint-ai && bun install && bun run dev
 ```
 
-`cp .env.example .env` and add at least `ANTHROPIC_API_KEY` before the first run. The server lazy-bootstraps the SQLite schema and seeds default workspaces on first start.
+`cp .env.example .env` and fill in your LLM provider key before the first run (the example leads with Azure OpenAI; Anthropic/OpenAI single-key alternatives are listed at the bottom). The server lazy-bootstraps the SQLite schema and seeds default workspaces on first start.
 
 After install, `bun run check` is the standalone verifier — re-run it after each branch switch. Once `bun run dev` is up, `bun run check --running` probes the live endpoints.
 
@@ -76,22 +74,23 @@ apps/
 packages/
   shared/src/         — Zod schemas and shared types
   skills/src/         — Skill loader, registry, and router
-  mcp-rpi/src/        — MCP server and RPI tool definitions
+  mcp-rpi/src/        — RPI MCP server and tool definitions
+  mcp-drh/src/        — DRH MCP server and tool definitions
 skills/               — SKILL.md files (skill definitions)
 ```
 
 ## Writing code
 
-We accept PRs that follow the process here and stay narrow in scope. If you spot something that should change, **open an issue first** so we can confirm it makes sense before you invest time.
+We accept PRs that follow the process here and stay narrow in scope. If you spot something that should change, **reach out at support@redpointglobal.com first** so we can confirm it makes sense before you invest time.
 
 Once an issue is accepted:
 
-1. Fork the repository and create a topic branch from `master`.
+1. Fork the repository and create a topic branch from `main`.
 2. Make your changes, keeping commits focused and messages descriptive.
 3. Add or update tests covering your change. PRs without test coverage for new behavior will not be accepted.
 4. Update relevant documentation (README, files under `docs/`, in-code comments where the *why* is non-obvious).
 5. Run `bun run check` and `bun run test` locally before opening the PR.
-6. Open the PR against `master` with a clear description of the change and a reference to the originating issue.
+6. Open the PR against `main` with a clear description of the change and a reference to the originating issue.
 
 A maintainer will run `bun run check` and `bun run test` on your PR before merging. Please run both locally first; PRs that fail either will be sent back.
 
@@ -112,6 +111,18 @@ bun test packages/skills/src/__tests__/loader.test.ts
 
 **Always use `bun run test`, not raw `bun test`.** Bun's `mock.module()` registers process-globally and the server integration tests mock `@redpoint-ai/skills`; raw `bun test` discovers all test files into a single process, which can leak that mock into other packages and cascade failures. `bun run test` (and per-file `bun test <file>`) sidestep the leak.
 
+## Building the docker bundle (maintainer flow)
+
+The prebuilt docker bundle is a maintainer artifact — it is not part of either public getting-started path. Produce it from a clone:
+
+```bash
+bun run build:bundle
+```
+
+It builds the four service images, `docker save`s them into `rp-ai-images.tar`, copies your root `.env` verbatim as the bundle's `.env`, stamps the version from `packages/shared/version.json`, and writes `dist/_rp-ai_web_docker-container_<version>.zip`. Requires Docker running and a filled-in **root `.env`** — including `COMPOSE_PROJECT_NAME=redpointai`, without which the build hard-fails (the launchers' container cleanup keys on the compose project label). The bundle runs all four services, so the whole root `.env` is copied as-is — keep dev-only tooling secrets (e.g. a Semgrep token) in your shell, not in `.env`.
+
+See [docs/architecture.md#deployment-topology](docs/architecture.md#deployment-topology) for the multi-container rationale.
+
 ## Coding style
 
 - **Validation:** Zod schemas for everything crossing a package boundary or a network surface. Schemas live in `packages/shared/src/schemas/` so they can be reused across server, web, and MCP.
@@ -127,7 +138,7 @@ bun test packages/skills/src/__tests__/loader.test.ts
 Update docs alongside code changes:
 
 - `README.md` if you're changing setup, audiences, or the top-level architecture summary.
-- Files under `docs/` if you're adding or changing a documented surface (architecture, providers, deployment, API, skills, workspaces).
+- Files under `docs/` if you're adding or changing a documented surface (architecture, providers, API, skills, workspaces).
 - In-code comments only when the rationale isn't obvious from the code itself.
 
 If you're adding a new skill, MCP tool, or provider, list it in the appropriate docs page so the next contributor can find it.
@@ -135,7 +146,7 @@ If you're adding a new skill, MCP tool, or provider, list it in the appropriate 
 ## Adding New MCP Tools
 
 1. Choose the appropriate domain file in `packages/mcp-rpi/src/tools/` (or create a new one)
-2. Register the tool with the MCP server using `server.tool()`
+2. Register the tool following the existing `registerTool` pattern in the domain files
 3. Define the Zod schema for parameters
 4. Implement the handler using the `RPIApiClient`
 5. If creating a new domain file, register it in `packages/mcp-rpi/src/server.ts`
@@ -215,22 +226,25 @@ This rule also keeps expert prose **format-agnostic**: a clean expert body can b
 2. Implement the model factory case in `apps/server/src/config/providers.ts`
 3. Add the corresponding `@ai-sdk/*` package dependency
 4. Update the providers list endpoint
+5. If the provider should be selectable from the environment, add a branch to `pickDefaultProvider` in `apps/server/src/store/seed.ts` — the factory case alone does not make it env-selectable
 
 ## Debugging
 
-RedpointAI runs three processes during `bun run dev`:
+RedpointAI runs four processes during `bun run dev`:
 
 | Process       | Port | Logs                                                                 |
 | ------------- | ---- | -------------------------------------------------------------------- |
 | `apps/server` | 3000 | Pino — structured JSON to stdout. Set `LOG_LEVEL=debug` for verbose. |
 | `apps/web`    | 3001 | Next.js — combined dev server logs to stdout.                        |
 | `mcp-rpi`     | 3002 | HTTP transport — request/response logs to stdout.                    |
+| `mcp-drh`     | 3003 | HTTP transport — request/response logs to stdout.                    |
 
 Health endpoints (also exercised by `bun run check --running`):
 
 - `http://localhost:3000/api/v1/health`
 - `http://localhost:3001/`
 - `http://localhost:3002/health`
+- `http://localhost:3003/health`
 
 If something fails to start, `bun run check` will usually identify the cause (Bun/Node version drift, lockfile drift, blank `.env`) faster than reading logs.
 
@@ -240,7 +254,7 @@ Note: Bun's hot reload does not cross package boundaries. Changes inside `packag
 
 **Do not report security vulnerabilities through public GitHub issues, discussions, or PRs.**
 
-If you believe you've found a security vulnerability in RedpointAI, follow the disclosure process in [`SECURITY.md`](SECURITY.md). That document covers GitHub Private Vulnerability Reporting, the Security Response Center email, and the response SLAs Redpoint commits to.
+If you believe you've found a security vulnerability in RedpointAI, follow the disclosure process in [`SECURITY.md`](SECURITY.md). That document covers the private reporting channel (the Security Response Center email) and the response process.
 
 When contributing code, please also:
 

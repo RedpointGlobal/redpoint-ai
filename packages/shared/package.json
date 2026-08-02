@@ -7,7 +7,7 @@
   "description": "Shared schemas and types for the RedpointAI platform",
   "repository": {
     "type": "git",
-    "url": "https://github.com/RedPointGlobal/redpoint-ai.git",
+    "url": "https://github.com/RedpointGlobal/redpoint-ai.git",
     "directory": "packages/shared"
   },
   "publishConfig": {

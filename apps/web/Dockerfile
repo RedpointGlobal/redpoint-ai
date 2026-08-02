@@ -7,7 +7,7 @@ FROM oven/bun:1.3.12 AS builder
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 # Disable Next.js anonymous telemetry for the build (and any runtime invocation).
-# OSS hygiene: no usage data leaves the build host. See RSU-3400 D-3.
+# OSS hygiene: no usage data leaves the build host.
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Copy ALL workspace package.json files so Bun sees the same workspace graph
@@ -19,6 +19,7 @@ COPY apps/web/package.json ./apps/web/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/skills/package.json ./packages/skills/
 COPY packages/mcp-rpi/package.json ./packages/mcp-rpi/
+COPY packages/mcp-drh/package.json ./packages/mcp-drh/
 # Root postinstall hook is `git config core.fileMode false` (gated by a
 # `git rev-parse --is-inside-work-tree` check); inside Docker the .git
 # directory is absent so it short-circuits to a no-op. No need to COPY

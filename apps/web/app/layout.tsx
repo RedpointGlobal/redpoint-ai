@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "RedpointAI",
-  description: "AI Agent Platform for RedPoint Interaction",
+  description: "Redpoint Global · Agentic AI Platform",
 };
 
 export default function RootLayout({

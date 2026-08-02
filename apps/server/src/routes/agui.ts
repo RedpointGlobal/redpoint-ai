@@ -7,7 +7,6 @@ import { randomUUID } from "crypto";
 import { createModelFromConfig } from "../config/providers.js";
 import { mcpManager } from "../mcp/client.js";
 import {
-  loadSkillsFromDirectory,
   SkillRegistry,
   createSkillRouterTool,
   buildRouterSystemPrompt,
@@ -16,29 +15,17 @@ import {
 } from "@redpoint-ai/skills";
 import { WorkspaceConfigSchema } from "@redpoint-ai/shared";
 import { logAudit } from "../lib/audit.js";
+// Shared promise-caching singleton. A local copy here assigned the registry
+// BEFORE awaiting loadSkillsFromDirectory(), so a second caller arriving during
+// boot saw a truthy-but-EMPTY registry — and because the empty registry was
+// cached rather than the promise, that degradation was permanent for the
+// process, not transient. registry-singleton.ts documents and fixes exactly this.
+import { getSkillRegistry } from "../skills/registry-singleton.js";
 import { resolveTier } from "../agents/tier-resolver.js";
 import { extractListToolsCapability } from "../mcp/mcp-category-discovery.js";
 import { appendTrace, truncateForMessage } from "../lib/trace-buffer.js";
 import type { TelemetryEvent } from "@redpoint-ai/shared";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const SKILLS_DIR = join(__dirname, "../../../../skills");
-
-let skillRegistry: SkillRegistry | null = null;
-async function getSkillRegistry(): Promise<SkillRegistry> {
-  if (!skillRegistry) {
-    skillRegistry = new SkillRegistry();
-    try {
-      const skills = await loadSkillsFromDirectory(SKILLS_DIR);
-      skills.forEach((s) => skillRegistry!.register(s));
-    } catch {
-      // No skills directory
-    }
-  }
-  return skillRegistry;
-}
 
 export const aguiRoutes = new Hono();
 
@@ -105,7 +92,27 @@ aguiRoutes.post(
     });
 
     const mcpTools: Record<string, Tool> = config.mcp?.length
-      ? await mcpManager.getToolsForWorkspace(workspaceId, config.mcp)
+      ? await Promise.race([
+          mcpManager.getToolsForWorkspace(workspaceId, config.mcp),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("tool load timed out after 10s — server may be down")),
+              10_000,
+            ),
+          ),
+        ])
+          .catch((err: unknown) => {
+            // Surface, don't swallow: an empty tool map here yields an agent
+            // that looks healthy and answers without the tools it advertises.
+            // Rethrow so the SSE run reports a failure the caller can see.
+            const detail = err instanceof Error ? err.message : String(err);
+            console.error(
+              `[agui] MCP tools unavailable for workspace ${workspaceId}: ${detail}`,
+            );
+            throw new Error(
+              `Tool server for this workspace is not reachable: ${detail}`,
+            );
+          })
       : {};
 
     const tools: Record<string, Tool> = {};

@@ -25,6 +25,9 @@ const __testsDir = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__testsDir, "../../../..");
 const SKILLS_DIR = join(REPO_ROOT, "skills");
 const MCP_RPI_TOOLS_DIR = join(REPO_ROOT, "packages/mcp-rpi/src/tools");
+// DR Hub tools live in their own MCP server package; drh-* skills reference
+// them, so the cross-check must span both servers, not just mcp-rpi.
+const MCP_DRH_TOOLS_DIR = join(REPO_ROOT, "packages/mcp-drh/src/tools");
 
 /**
  * Skills with known-stale filters that we don't fail the build on. Each entry
@@ -37,19 +40,25 @@ const MCP_RPI_TOOLS_DIR = join(REPO_ROOT, "packages/mcp-rpi/src/tools");
  */
 const KNOWN_STALE: ReadonlyArray<{ name: string; reason: string }> = [];
 
+function scanToolDir(dir: string, names: Set<string>): void {
+  if (!existsSync(dir)) return;
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith(".ts")) continue;
+    if (file === "response-shapes.ts") continue;
+    const src = readFileSync(join(dir, file), "utf-8");
+    for (const m of src.matchAll(/registerTool\(\s*["']([a-z_]+)["']/g)) {
+      names.add(m[1]);
+    }
+  }
+}
+
 function collectRegisteredToolNames(): Set<string> {
   if (!existsSync(MCP_RPI_TOOLS_DIR)) {
     throw new Error(`mcp-rpi tools dir not found at ${MCP_RPI_TOOLS_DIR}`);
   }
   const names = new Set<string>();
-  for (const file of readdirSync(MCP_RPI_TOOLS_DIR)) {
-    if (!file.endsWith(".ts")) continue;
-    if (file === "response-shapes.ts") continue;
-    const src = readFileSync(join(MCP_RPI_TOOLS_DIR, file), "utf-8");
-    for (const m of src.matchAll(/registerTool\(\s*["']([a-z_]+)["']/g)) {
-      names.add(m[1]);
-    }
-  }
+  scanToolDir(MCP_RPI_TOOLS_DIR, names);
+  scanToolDir(MCP_DRH_TOOLS_DIR, names); // DR Hub stub tools (drh-* skills)
   return names;
 }
 

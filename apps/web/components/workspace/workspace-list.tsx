@@ -1,6 +1,9 @@
 import type { Workspace } from "@/lib/api";
 import { WorkspaceCard } from "@/components/workspace/workspace-card";
-import { CreateWorkspaceForm } from "@/components/workspace/create-workspace-dialog";
+// Workspace creation from the picker is disabled — users may not create
+// workspaces. Re-enable by uncommenting this import and the <CreateWorkspaceForm/>
+// below.
+// import { CreateWorkspaceForm } from "@/components/workspace/create-workspace-dialog";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
@@ -13,7 +16,8 @@ export function WorkspaceList({ workspaces }: WorkspaceListProps) {
         {workspaces.map((ws) => (
           <WorkspaceCard key={ws.id} workspace={ws} />
         ))}
-        <CreateWorkspaceForm />
+        {/* Workspace creation disabled — users may not create workspaces. */}
+        {/* <CreateWorkspaceForm /> */}
       </div>
 
       {workspaces.length === 0 && (
