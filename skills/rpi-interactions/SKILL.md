@@ -3,6 +3,8 @@ name: rpi-interactions
 title: RPI Interactions
 description: Marketing interactions — a.k.a. activations, campaigns, or journeys — and their workflows. Covers "list my interactions / activations", "when does each interaction fire next?", "show me scheduled triggers", "what's currently running", workflow activate/pause/stop/rollback, and trigger schedule calculations.
 type: action
+clientIdFoundation: true
+dateGrounding: true
 mcpToolFilter:
   - list_interactions
   - get_interaction_by_id
@@ -16,6 +18,7 @@ mcpToolFilter:
   - get_workflow_instance_summary
   - get_interactions_workflow_status
   - get_interaction_workflow_instances
+  - summarize_interaction_runs
   - calculate_interaction_next_firing_times
   - get_file_info_by_id
   - get_audience_by_id
@@ -24,6 +27,7 @@ operations:
   get: [list_interactions, get_interaction_by_id, get_interaction_by_name, get_interaction_activity, get_file_info_by_id, get_audience_by_id]
   metadata: [list_interactions, get_interaction_activity, get_interaction_trigger, get_interaction_available_inputs, get_interaction_default_metadata]
   workflow: [list_interactions, get_interaction_workflows, get_interaction_workflow_activities, get_workflow_instance_summary, get_interactions_workflow_status, get_interaction_workflow_instances]
+  runs: [summarize_interaction_runs, list_interactions]
   schedule: [list_interactions, calculate_interaction_next_firing_times]
 maxSteps: 15
 tags: [rpi, interactions, workflows]
@@ -34,14 +38,6 @@ tags: [rpi, interactions, workflows]
 Tools for working with **interactions** (RPI's name for campaigns / journeys / activations) and their workflow lifecycle. An interaction has one or more **workflow associations**, each of which can be activated to produce a running **workflow instance**.
 
 Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the folder-listing capability before any create call, show names not IDs.
-
-**`clientId` handling.** Three cases:
-
-1. **No `clientId` provided** (most common — generic requests like "list my interactions") — OMIT the `clientId` argument entirely. The MCP server applies `RPI_DEFAULT_CLIENT_ID` from environment automatically. Do NOT ask the user for a clientId; do NOT refuse to proceed.
-
-2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890`) — pass it through unchanged.
-
-3. **`clientId` provided as a non-UUID** (almost certainly a tenant *name* the parent agent forgot to resolve) — your sub-agent's tool filter does NOT include name-resolution. Stop and respond with a clear error asking the parent to redispatch via the **rpi-clients** skill to resolve the name to a UUID. Forwarding a name will fail with a 401 / "Client ID '00000000-0000-0000-0000-000000000000' not found" because RPI parses non-UUID input to the empty UUID.
 
 ## Tool inventory
 
@@ -64,6 +60,7 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 - `get_workflow_instance_summary` — overall summary for a single running/finished instance (needs the integer `workflowAssociationInstanceID`).
 - `get_interactions_workflow_status` — current top-level status for one or more interactions (does NOT carry historical execution data).
 - `get_interaction_workflow_instances` — list all past and current workflow instances for an interaction id, optionally with their result counts. Use this to answer "what were the counts from the last run?" — pick the most recent terminal-state instance from the returned array.
+- `summarize_interaction_runs` — the tool for a **per-interaction runs summary** (operation `runs`). **Call it ONCE with just `fromDate`/`toDate`** — it aggregates SERVER-SIDE (fast, ~1-2s) and returns the computed summary: `totalRuns`, `activeInteractions`, `testInteractions`/`productionInteractions` (interaction counts by environment), `runsPerInteraction:[{name,runs,type}]` (top 10), `truncated`/`truncationNote`. Do NOT hand-aggregate raw runs and do NOT loop `get_interaction_by_id`/per-interaction. If `truncated` is true, relay `truncationNote` — never present a partial summary as complete. This is the per-interaction run-data tool; there is no raw per-run list tool. (A runs **dashboard/report/trend** — counts over time — is rendered by the orchestrator's dashboard view, not composed here.)
 
 ### Scheduling
 - `calculate_interaction_next_firing_times` — compute the next N firing times for a recurrence trigger. Optional `numberOfSchedules` argument.

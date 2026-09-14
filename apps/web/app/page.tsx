@@ -1,5 +1,7 @@
 import { listWorkspaces, type Workspace } from "@/lib/api";
 import { redirect } from "next/navigation";
+import { cookies, headers } from "next/headers";
+import { buildForwardHeaders } from "@/lib/server-forward";
 import { WorkspaceList } from "@/components/workspace/workspace-list";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { APP_VERSION } from "@/lib/version";
@@ -7,12 +9,38 @@ import { APP_VERSION } from "@/lib/version";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  // Under AUTH_REQUIRED=true, listWorkspaces hits the gated apps/server and
+  // 401s without a credential — which blanked this picker ("No workspace
+  // available") after login. Derive the logged-in session's credential
+  // server-side (raw token never touches the browser) and forward it. Under
+  // auth=false the cookie carries nothing forwardable and this is a no-op.
   let workspaces: Workspace[] = [];
+  let unauthorized = false;
   try {
-    workspaces = await listWorkspaces();
-  } catch {
-    // Backend not running yet -- fall through to the empty-state message.
+    const cookieStore = await cookies();
+    const cookieHeader = cookieStore
+      .getAll()
+      .map((c) => `${c.name}=${c.value}`)
+      .join("; ");
+    const hdrs = await headers();
+    const proto = hdrs.get("x-forwarded-proto") ?? "http";
+    const host =
+      hdrs.get("x-forwarded-host") ?? hdrs.get("host") ?? "localhost:3001";
+    const { headers: forward } = await buildForwardHeaders(
+      cookieHeader,
+      `${proto}://${host}`,
+    );
+    workspaces = await listWorkspaces(forward);
+  } catch (e) {
+    // A 401 means the forwarded credential is present but no longer valid at
+    // apps/server (e.g. a revoked/deleted API key) — the middleware gate lets
+    // it through because the cred is present, but the read is rejected. Send
+    // the user to re-authenticate rather than dead-ending on the empty state.
+    // Any other error (backend down) falls through to the empty-state message.
+    if (e instanceof Error && e.message.includes("401")) unauthorized = true;
   }
+  // redirect() throws NEXT_REDIRECT, so it must run OUTSIDE the try/catch.
+  if (unauthorized) redirect("/login");
 
   // Multi-domain platform: show the picker when more than one workspace exists
   // (e.g. RPI + DRH, each its own domain). With a single workspace this stays

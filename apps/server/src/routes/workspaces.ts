@@ -1,11 +1,18 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { WorkspaceCreateSchema, WorkspaceConfigSchema, WORKSPACE_NAMES } from "@redpoint-ai/shared";
+import {
+  WorkspaceCreateSchema,
+  WorkspaceConfigSchema,
+  WORKSPACE_NAMES,
+  isInstrumentationEnabled,
+  probeInstrumentationSink,
+} from "@redpoint-ai/shared";
 import { db } from "../store/db.js";
 import { workspaces } from "../store/schema.js";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { mcpManager } from "../mcp/client.js";
+import { readRpiForwardContext } from "../mcp/forward-headers.js";
 import { resolveTier } from "../agents/tier-resolver.js";
 import { extractListToolsCapability } from "../mcp/mcp-category-discovery.js";
 import { listProviders } from "../config/providers.js";
@@ -24,7 +31,7 @@ export const workspaceRoutes = new Hono();
 
 const RUNTIME_STATUS_TTL_MS = 30_000;
 interface CachedRuntimeStatus {
-  value: unknown;
+  value: Record<string, unknown>;
   expires: number;
 }
 const runtimeStatusCache = new Map<string, CachedRuntimeStatus>();
@@ -65,6 +72,17 @@ workspaceRoutes.get("/:id", async (c) => {
 
 workspaceRoutes.get("/:id/tools", async (c) => {
   const id = c.req.param("id");
+  // Per-user RPI auth — forward the logged-in user's RPI Bearer to the MCP
+  // handshake, exactly as the runtime-status probe does below. Without this,
+  // under AUTH_REQUIRED=true the MCP server (also gated) rejects the tool-list
+  // handshake with 401 and this endpoint hard-503s — so the Tools tab stays
+  // empty even for a correctly authenticated user. Falls through to the proxy
+  // path when absent (unchanged pre-auth behavior).
+  // Read the SAME per-request pair as the chat route (X-RPI-Token + X-RPI-URL) via
+  // the shared helper — threading X-RPI-URL here is the fix for the info-panel
+  // showing MCP "rpi" unreachable (401) under a non-default Environment Location:
+  // without it the probe validated the token against the default instance.
+  const { userRpiToken, userRpiUrl } = readRpiForwardContext(c);
   const [workspace] = await db
     .select()
     .from(workspaces)
@@ -86,7 +104,7 @@ workspaceRoutes.get("/:id/tools", async (c) => {
       // Bounded like the runtime-status probe below: an unreachable server
       // stalls rather than throwing, so without a fuse this endpoint hangs.
       tools = await Promise.race([
-        mcpManager.getToolsForWorkspace(id, config.mcp),
+        mcpManager.getToolsForWorkspace(id, config.mcp, userRpiToken, userRpiUrl),
         new Promise<never>((_, reject) =>
           setTimeout(
             () => reject(new Error("tool load timed out after 10s — server may be down")),
@@ -213,12 +231,26 @@ workspaceRoutes.get("/:id/runtime-status", async (c) => {
   //
   // The cache key is also tagged with a short token marker so authenticated
   // and unauthenticated probes don't clobber each other in the cache.
-  const userRpiToken = c.req.header("x-rpi-token") ?? undefined;
-  const cacheTag = userRpiToken ? `auth:${userRpiToken.slice(-8)}` : "anon";
+  const { userRpiToken, userRpiUrl } = readRpiForwardContext(c);
+  // Key the 30s cache on BOTH the token AND the Environment Location: the probe
+  // now targets the rep's instance, so the same token under a different location
+  // is a DIFFERENT result — without the url in the key, a location switch would
+  // serve stale wrong-instance status for the TTL (the same bug class this fix
+  // closes).
+  const cacheTag = `${userRpiToken ? `auth:${userRpiToken.slice(-8)}` : "anon"}:${userRpiUrl ?? "default"}`;
   const cacheKey = `${id}::${cacheTag}`;
+
+  // Instrumentation health is server-global and cheap to probe — compute it
+  // FRESH on every call (outside the 30s runtime-status cache) so breaking the
+  // sink path is reflected promptly in the config tab.
+  const instrumentation = {
+    enabled: isInstrumentationEnabled(),
+    sinkWritable: await probeInstrumentationSink(),
+  };
+
   const cached = runtimeStatusCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) {
-    return c.json(cached.value);
+    return c.json({ ...cached.value, instrumentation });
   }
 
   const [workspace] = await db
@@ -279,21 +311,23 @@ workspaceRoutes.get("/:id/runtime-status", async (c) => {
     const toolsForThisServer: string[] = [];
 
     try {
-      // 5s probe timeout — the underlying MCP transport's default is 30s
-      // which makes a dead server hang the panel for half a minute. Promise.race
-      // with our own short fuse gives the UI a snappy "unreachable" diagnostic
-      // instead. The failure result is then cached by the 30s TTL so we don't
+      // 10s probe timeout — matches chat.ts's MCP_TOOL_LOAD_TIMEOUT_MS so the panel
+      // probe and the chat tool-load share ONE fuse (they were 5s vs 10s, which
+      // false-negatived a slow-but-valid native token whose cold auth — a doomed
+      // Keycloak JWKS refetch + validate-token-status — could momentarily approach 5s).
+      // Still far under the MCP transport's own long default (which would otherwise hang
+      // a dead server for ~30s). The failure result is cached by the 30s TTL so we don't
       // re-probe for every panel open while MCP is still down.
       const tools = await Promise.race([
         // Forward the user's RPI Bearer (when logged in via rpi-native) so
         // the probe runs as the user. Falls through to the proxy path when
         // userRpiToken is undefined — pre-PR behavior preserved for callers
         // that don't carry a session.
-        mcpManager.getToolsForWorkspace(id, [conn], userRpiToken),
+        mcpManager.getToolsForWorkspace(id, [conn], userRpiToken, userRpiUrl),
         new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error("probe timeout after 5s — server may be down")),
-            5_000,
+            () => reject(new Error("probe timeout after 10s — server may be down")),
+            10_000,
           ),
         ),
       ]);
@@ -429,7 +463,8 @@ workspaceRoutes.get("/:id/runtime-status", async (c) => {
     expires: Date.now() + RUNTIME_STATUS_TTL_MS,
   });
 
-  return c.json(result);
+  // instrumentation is merged fresh (not cached) so it tracks the live sink state.
+  return c.json({ ...result, instrumentation });
 });
 
 workspaceRoutes.post(

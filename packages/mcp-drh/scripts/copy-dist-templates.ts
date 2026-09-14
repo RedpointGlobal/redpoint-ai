@@ -35,6 +35,7 @@
  */
 
 import { mkdirSync, writeFileSync, existsSync, readFileSync, chmodSync } from "fs";
+import { parseScopedEnv, renderBinaryTemplate } from "../../../scripts/env-scopes";
 
 /** Normalize to CRLF for Windows batch files. Collapses \r?\n first, so re-running cannot
  *  double-convert an already-CRLF string. */
@@ -274,17 +275,27 @@ different ports, so they can run at the same time.
     - The binary     rp-rpi-mcp-windows.exe  /  rp-rpi-mcp-linux
                      rp-drh-mcp-windows.exe  /  rp-drh-mcp-linux
     - A launcher     Start MCP Server (Windows).bat  /  (Linux).sh
-    - .env           already filled in - nothing to configure
+    - .env.example   keys only — copy to .env and fill in your values
     - README.txt
 
 
-(4) Double-click the launcher:
+(4) Copy .env.example to .env and fill in your values:
+
+    RPI    RPI_INTEGRATION_API_URL, RPI_OAUTH_CLIENT_ID,
+           RPI_OAUTH_CLIENT_SECRET, RPI_DEFAULT_CLIENT_ID
+    DRH    DRH_API_URL, DRH_DEFAULT_CLIENT_ID,
+           DRH_PROXY_USER, DRH_PROXY_PASS
+
+    (The bundle ships keys only — no secrets — so this step is required.)
+
+
+(5) Double-click the launcher:
 
     Windows:  Start MCP Server (Windows).bat
     Linux:    Start MCP Server (Linux).sh
 
 
-(5) The server is listening at:
+(6) The server is listening at:
 
     RPI    http://localhost:3002/mcp
     DRH    http://localhost:3003/mcp
@@ -292,7 +303,7 @@ different ports, so they can run at the same time.
     Point your MCP client at that URL.
 
 
-(6) When you're done: close the launcher window (or Ctrl+C if it is
+(7) When you're done: close the launcher window (or Ctrl+C if it is
     attached to a terminal).
 
 
@@ -326,46 +337,27 @@ Is it up?  Open the health URL in a browser:
 POINTING AT YOUR OWN INSTANCE
 ------------------------------------------------------------------------
 
-The shipped .env is preconfigured against a Redpoint sandbox. To use your
-own environment, edit .env and restart the launcher:
+The bundle ships .env.example (keys only, no secrets). Copy it to .env and
+fill in the values for your environment, then restart the launcher:
 
     RPI    RPI_INTEGRATION_API_URL, RPI_OAUTH_CLIENT_ID,
            RPI_OAUTH_CLIENT_SECRET, RPI_DEFAULT_CLIENT_ID
     DRH    DRH_API_URL, DRH_DEFAULT_CLIENT_ID,
            DRH_PROXY_USER, DRH_PROXY_PASS
 
-The .env carries working credentials — treat the extracted folder as
+Once you fill in .env it holds real credentials — treat the folder as
 sensitive and do not repost it.
 `;
 
-const envExampleContent = `# DRH MCP Server — standalone distribution
-#
-# Copy this file to \`.env\` and fill in your values.
-# Place the resulting \`.env\` in the same folder as the binary,
-# then launch the server.
-
-# Data Readiness Hub root URL (no /api-op suffix — the server appends it)
-DRH_API_URL=https://drh.your-company.com
-
-# Tenant sent as X-ClientId on every DRH call.
-DRH_DEFAULT_CLIENT_ID=
-
-# Optional. Injected as databaseId on database-scoped calls when the caller
-# omits it. A tenant may hold more than one database and there is no runtime
-# picker, so the deployment selects it. Leave blank to require it per call.
-DRH_DEFAULT_DATABASE_ID=
-
-# Service-account signon — the fallback identity when no per-user token is
-# present. Setting both implicitly enables the proxy; DRH_PROXY_ENABLED=false
-# force-disables it. When the proxy is off these two are not required.
-DRH_PROXY_USER=
-DRH_PROXY_PASS=
-DRH_PROXY_ENABLED=
-
-
-# Incoming auth. "false" accepts unauthenticated callers (local/dev posture).
-AUTH_REQUIRED=false
-`;
+// DERIVED from the committed root .env.example (single source of truth for scope
+// + keys) via scripts/env-scopes.ts — no hand-maintained key list, no drift. It
+// carries ONLY mcp-drh's scoped keys (AUTH_REQUIRED + DRH_*), secrets EMPTY:
+// nothing secret ships in the zip (decision B). The rep copies it to .env.
+const envExampleContent = renderBinaryTemplate(
+  parseScopedEnv(readFileSync(join(repoRoot, ".env.example"), "utf8")).vars,
+  "mcp-drh",
+  "DRH MCP Server",
+);
 
 // ---------------------------------------------------------------------------
 // Per-platform manifest
@@ -432,30 +424,11 @@ const platforms: PlatformDef[] = [
 // ---------------------------------------------------------------------------
 
 let platformsWritten = 0;
-let envCopied = 0;
 
-const rootEnv = join(repoRoot, ".env");
-const hasRootEnv = existsSync(rootEnv);
-
-// Domain-scoped slice of the developer's root .env (the single source of truth).
-// The DRH standalone server ships only DRH_* keys plus the shared AUTH_REQUIRED;
-// everything else (RPI_*, AZURE_*, AUTH_SECRET, SEMGREP_*, COMPOSE_PROJECT_NAME)
-// is excluded by construction — least privilege. `.env.example` is docs only, not
-// the source of the shipped `.env`.
-const DOMAIN_PREFIX = "DRH_";
-const SHARED_KEYS = new Set(["AUTH_REQUIRED"]);
-function buildShippedEnv(): string {
-  if (!hasRootEnv) return "";
-  const KV = /^([A-Za-z_][A-Za-z0-9_]*)=/;
-  const out: string[] = [];
-  for (const line of readFileSync(rootEnv, "utf8").split(/\r?\n/)) {
-    const m = line.match(KV);
-    if (!m) continue;
-    const key = m[1];
-    if (key.startsWith(DOMAIN_PREFIX) || SHARED_KEYS.has(key)) out.push(line);
-  }
-  return out.join("\n") + "\n";
-}
+// Decision B: NO secret value ships in the binary zip. The bundle carries only
+// the empty, scope-sliced .env.example (keys only) derived above; the rep copies
+// it to .env and fills in values. Double-click-with-real-values convenience lives
+// in the internal full-stack container, never in a public/retail binary download.
 
 for (const p of platforms) {
   const subdir = join(dst, p.subdir);
@@ -482,24 +455,12 @@ for (const p of platforms) {
 
   writeFileSync(join(subdir, QUICK_START_NAME), quickStartContent);
 
-  // Ship a REAL, working .env. These binaries go to internal reps, not a public
-  // registry — the point is a folder that runs on double-click with nothing to
-  // configure, matching the docker bundle. Derived, not copied: see
-  // buildShippedEnv() for why a wholesale copy is the wrong move.
-  if (hasRootEnv) {
-    writeFileSync(join(subdir, ".env"), buildShippedEnv());
-    envCopied += 1;
-  }
+  // Decision B: no real .env is written into the bundle — only the empty,
+  // scope-sliced .env.example above. Public/retail downloads carry zero secrets.
 
   platformsWritten += 1;
 }
 
-if (hasRootEnv) {
-  console.log(
-    `[copy-dist-templates] Wrote ${platformsWritten} platform bundle(s) + wrote domain-scoped .env into ${envCopied} subdir(s) (scoped slice of root .env; shipped in the zip)`,
-  );
-} else {
-  console.log(
-    `[copy-dist-templates] Wrote ${platformsWritten} platform bundle(s) to ${dst} (no root .env to copy — customer flow)`,
-  );
-}
+console.log(
+  `[copy-dist-templates] Wrote ${platformsWritten} platform bundle(s) to ${dst} (empty scope-sliced .env.example only — no secrets shipped)`,
+);

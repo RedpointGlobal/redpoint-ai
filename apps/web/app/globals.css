@@ -29,6 +29,31 @@
   --chart-3: oklch(0.9310 0 0);
   --chart-4: oklch(0.9367 0.0523 75.5009);
   --chart-5: oklch(0.4338 0.0437 41.6746);
+  /* Categorical dataviz palette (#27897) — the agent charts' SERIES colours,
+     separate from shadcn's brand --chart-* (a muted brown/grey set that only has
+     5 entries, several near-indistinguishable). Based on the Okabe–Ito palette:
+     8 hues chosen to stay distinguishable under the common colour-vision
+     deficiencies (deutan/protan/tritan). Light-mode tuning: the two lightest
+     hues (sky, yellow) are darkened for adequate contrast on the near-white
+     canvas. Consumed by agent-chart.tsx via var() so a theme switch recolours
+     the SVG with no JS. */
+  --dataviz-1: #3b5bda; /* indigo — series 1 / PRODUCTION (dashboard target #27897) */
+  --dataviz-2: #e08a37; /* amber — series 2 / TEST (blue+orange stays colourblind-safe) */
+  --dataviz-3: #009e73; /* bluish green */
+  --dataviz-4: #d55e00; /* vermillion */
+  --dataviz-5: #cc79a7; /* reddish purple */
+  --dataviz-6: #56b4e9; /* sky blue */
+  --dataviz-7: #b8860b; /* dark goldenrod (yellow, darkened for white-bg contrast) */
+  --dataviz-8: #6b7280; /* neutral slate grey */
+  /* Dashboard visual language (#27897 followup) — the artifact target palette.
+     prod/test are the two headline series; grid is a faint horizontal rule;
+     card-shadow is the soft layered lift on tiles/panels. Light values here,
+     redefined under .dark below. */
+  --dash-prod: #3b5bda;
+  --dash-test: #e08a37;
+  --dash-grid: #edf0f4;
+  --dash-card-shadow: 0 1px 2px rgba(20, 28, 45, 0.04), 0 6px 20px rgba(20, 28, 45, 0.05);
+  --dash-eyebrow: #e08a37;
   --sidebar: oklch(0.9881 0 0);
   --sidebar-foreground: oklch(0.2645 0 0);
   --sidebar-primary: oklch(0.3250 0 0);
@@ -81,6 +106,23 @@
   --chart-3: oklch(0.2850 0 0);
   --chart-4: oklch(0.3481 0.0219 67.0001);
   --chart-5: oklch(0.9245 0.0533 67.0855);
+  /* Dark-mode dataviz palette (see :root note). Same Okabe–Ito hue order,
+     lifted in lightness so each series holds contrast against the dark canvas;
+     yellow returns to its bright form (great on dark). */
+  --dataviz-1: #7091ff; /* indigo — series 1 / PRODUCTION (lifted for dark canvas) */
+  --dataviz-2: #f0a95f; /* amber — series 2 / TEST */
+  --dataviz-3: #34c79a; /* bluish green */
+  --dataviz-4: #f27a3d; /* vermillion */
+  --dataviz-5: #e39bc4; /* reddish purple */
+  --dataviz-6: #7fcbf0; /* sky blue */
+  --dataviz-7: #f0e442; /* yellow */
+  --dataviz-8: #9ca3af; /* neutral slate grey */
+  /* Dashboard visual language (#27897 followup) — dark values (see :root note). */
+  --dash-prod: #7091ff;
+  --dash-test: #f0a95f;
+  --dash-grid: #242a35;
+  --dash-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --dash-eyebrow: #f0a95f;
   --sidebar: oklch(0.2103 0.0059 285.8852);
   --sidebar-foreground: oklch(0.9674 0.0013 286.3752);
   --sidebar-primary: oklch(0.4882 0.2172 264.3763);
@@ -143,6 +185,16 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-geist-sans);
+
+  /* Dashboard/dataviz typefaces (#27897 followup) — usable as font-dash / font-dash-mono. */
+  --font-dash: var(--font-plex-sans), var(--font-geist-sans), system-ui, sans-serif;
+  --font-dash-mono: var(--font-plex-mono), var(--font-geist-mono), ui-monospace, monospace;
+
+  /* The dashboard card lift, usable as shadow-dash. */
+  --shadow-dash: var(--dash-card-shadow);
+
+  --color-dash-prod: var(--dash-prod);
+  --color-dash-test: var(--dash-test);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

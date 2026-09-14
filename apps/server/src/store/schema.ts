@@ -19,6 +19,31 @@ export const threads = sqliteTable("threads", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
+/**
+ * #27828 — per-conversation active RPI tenant (X-ClientID) selection.
+ *
+ * A light store, NOT a threads column: the web chat path keys conversations by
+ * the AI SDK chat id (a non-UUID string that can't be the uuid `threads.id` in
+ * Postgres), and the /chat path doesn't create thread rows. Keyed by
+ * (conversationId, userId, workspaceId) — the userId scoping is the per-USER
+ * isolation guard so a shared conversation id can't leak one user's active tenant
+ * to another. NULL/absent row → fall back to RPI_DEFAULT_CLIENT_ID.
+ *
+ * Deliberately a CLEAN, separable context attribute — carries only the tenant
+ * selection, never message/result data — so a future cross-chat data-carry or
+ * cross-environment {url,token,clientId} routing can extend the same pattern
+ * without untangling this from conversation content.
+ */
+export const conversationClients = sqliteTable("conversation_clients", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull(),
+  userId: text("user_id").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  clientId: text("client_id").notNull(),
+  clientName: text("client_name"),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
 export const messages = sqliteTable("messages", {
   id: text("id").primaryKey(),
   threadId: text("thread_id")

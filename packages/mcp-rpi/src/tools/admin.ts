@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { RPIApiClient } from "../client/rpi-api.js";
 import { createToolRegistrar } from "../tool-categories.js";
+import { targetUrlOf } from "./generated-shared.js";
 
 const verboseSchema = z
   .boolean()
@@ -19,6 +20,7 @@ export function registerAdminTools(
   registerTool(
     "get_system_health_availability",
     {
+      _meta: { endpoints: ["/cluster/operations/system-health/availability"] },
       title: "Get Cluster System Health Availability",
       description:
         "Get cluster-wide system health availability status.",
@@ -37,7 +39,7 @@ export function registerAdminTools(
           userToken,
           "/cluster/operations/system-health/availability",
           undefined,
-          { verbose },
+          { verbose, baseUrl: targetUrlOf(extra) },
         );
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
@@ -54,6 +56,7 @@ export function registerAdminTools(
   registerTool(
     "get_cluster_api_error_log",
     {
+      _meta: { endpoints: ["/cluster/operations/logs/error/api"] },
       title: "Get Cluster API Error Log",
       description:
         "Get a paginated log of cluster-wide API errors. Supports filtering by title substring and RPI client ID. Useful for troubleshooting integration issues.",
@@ -101,7 +104,7 @@ export function registerAdminTools(
           userToken,
           "/cluster/operations/logs/error/api",
           params,
-          { verbose },
+          { verbose, baseUrl: targetUrlOf(extra) },
         );
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
@@ -118,6 +121,7 @@ export function registerAdminTools(
   registerTool(
     "get_cluster_audit_history",
     {
+      _meta: { endpoints: ["/cluster/operations/logs/audit-history"] },
       title: "Get Cluster Audit History",
       description:
         "Get a paginated log of cluster-wide audit events. Each entry records who performed which action on which resource at what time.",
@@ -155,7 +159,7 @@ export function registerAdminTools(
           userToken,
           "/cluster/operations/logs/audit-history",
           params,
-          { verbose },
+          { verbose, baseUrl: targetUrlOf(extra) },
         );
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],

@@ -42,7 +42,14 @@ const KNOWN_STALE: ReadonlyArray<{ name: string; reason: string }> = [];
 
 function scanToolDir(dir: string, names: Set<string>): void {
   if (!existsSync(dir)) return;
-  for (const file of readdirSync(dir)) {
+  // Recurse: hand tools live in src/tools/*.ts, generated tools (#27634) in
+  // src/tools/generated/*.ts — both register tools the mcpToolFilter can reference.
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      scanToolDir(join(dir, entry.name), names);
+      continue;
+    }
+    const file = entry.name;
     if (!file.endsWith(".ts")) continue;
     if (file === "response-shapes.ts") continue;
     const src = readFileSync(join(dir, file), "utf-8");

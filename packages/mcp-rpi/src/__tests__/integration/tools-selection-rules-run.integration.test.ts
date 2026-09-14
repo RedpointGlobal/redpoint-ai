@@ -56,6 +56,14 @@ if (shouldSkip) {
   );
 }
 
+// Proxy token, acquired in beforeAll and injected as the caller's identity.
+// Post auth-scoping, a tool call must present a token — resolveToolAuth
+// fail-closes a user-scoped tool with no token under AUTH_REQUIRED=true (which
+// is the default when unset). Injecting the proxy token exercises the real
+// tool→RPI path authenticated as the service account (same identity the other
+// live tests use).
+let runProxyToken: string | undefined;
+
 function invokeTool(
   server: McpServer,
   name: string,
@@ -71,18 +79,20 @@ function invokeTool(
   )._requestHandlers;
   const handler = handlers.get("tools/call");
   if (!handler) throw new Error("tools/call handler not registered");
-  // No authInfo.token → runSelectionRuleJob passes undefined userToken →
-  // RPIApiClient uses the proxy-user fallback (same as the other live tests).
   return handler(
     { method: "tools/call", params: { name, arguments: args } },
-    { signal: new AbortController().signal, sendRequest: () => Promise.resolve({}) },
+    {
+      signal: new AbortController().signal,
+      sendRequest: () => Promise.resolve({}),
+      authInfo: runProxyToken ? { token: runProxyToken } : undefined,
+    },
   ) as any;
 }
 
 describe.skipIf(shouldSkip)("Selection-rule RUN tools (live, server path)", () => {
   let server: McpServer;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const auth = new RPIAuthService(
       process.env.RPI_INTEGRATION_API_URL!,
       process.env.RPI_OAUTH_CLIENT_ID!,
@@ -97,6 +107,7 @@ describe.skipIf(shouldSkip)("Selection-rule RUN tools (live, server path)", () =
     );
     server = new McpServer({ name: "test", version: "0.0.0" });
     registerSelectionRuleTools(server, api);
+    runProxyToken = await auth.getProxyToken();
   });
 
   async function firstStandardRuleId(): Promise<string | undefined> {

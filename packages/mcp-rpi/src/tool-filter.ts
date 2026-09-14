@@ -27,16 +27,37 @@ const CATEGORY_DESCRIPTIONS: Record<ToolCategory, string> = {
     "Audience files and audience definitions (data structure templates)",
   admin:
     "Cluster operations (system health availability, API error log, audit history)",
-  auth: "Authentication diagnostics (verify_connection)",
+  auth:
+    "Authentication & user context — connection/token diagnostics, login/OIDC settings, and the caller's profile / accessible clients / recent items",
   clients: "RPI client (tenant) discovery",
   "file-system":
-    "Type-agnostic file lookups by RPI ID — resolve any GUID to a name/type/folder card (audiences, interactions, selection rules, etc.)",
+    "File metadata & relationships (type-agnostic) — resolve a GUID to its name/type/folder card, plus a file's metadata, history, and forward/reverse dependencies, and external-storage connector search. NOT the file's content (files category) or the folder tree (folders)",
   folders:
-    "Folder filesystem — list the folder tree and create new folders (file-system endpoints)",
+    "The folder/path tree that contains files — browse the tree, get a folder by id or full path, list a folder's contents, read folder permissions, or the user's private folder, and create folders. NOT the files themselves (files/file-system)",
   interactions:
     "Interactions and their sub-resources (activity, trigger, available inputs, metadata, workflows, next firing times)",
   "selection-rules":
     "Selection rules — Basic (document-database-decision) and Standard subtypes, plus document definitions available to Basic rules",
+  configuration:
+    "Client configuration reads — attribute lists, audience/selection metadata, and other tenant configuration resources",
+  files:
+    "Content-file objects stored in the RPI file system — decision rules, analysis panels, digital content assets, offers, dashboards/widgets, cell lists, export templates, model projects (NOT file-system, which is folders/metadata)",
+  cluster:
+    "Cluster-level administration reads — cluster users and external (federated) users, installed plugins, per-client auxiliary databases, and cluster error/housekeeping logs and system tasks (spans all clients; complements the admin category)",
+  "data-connectors":
+    "Data-connector reads — sync definitions and live sync status/info (the connector activate/deactivate actions are intentionally not exposed on this read-only surface)",
+  workflows:
+    "Workflow-run execution telemetry — per-activity results/logs/assets/SQL-trace and instance-level logs/summaries for a workflow-association instance (the runtime diagnostics of a workflow run). Complements the interaction/audience hand tools that report workflow status/summary",
+  operations:
+    "Client-scoped operational reads — the client's audit / SQL-audit / housekeeping logs, system tasks, execution services, audience-snapshot workflow status, and a system-health monitoring overview. Client-scoped counterparts to the cluster category and the admin hand tools",
+  "data-import":
+    "Data-import reads — import file definitions + housekeeping records, and the data-import file-system configuration + file listing",
+  "content-preview":
+    "Content preview reads — the available content combinations for a file/content/template, and rendering a combination as HTML",
+  jobs:
+    "Async job reads — a job's status/progress and its log output, by job ID",
+  "smart-assets":
+    "Smart-asset reads — a smart (dynamic/personalized) content asset and its embeddable JavaScript snippet",
 };
 
 export const FilteredListToolsRequestSchema = z.object({

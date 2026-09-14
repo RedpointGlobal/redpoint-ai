@@ -19,6 +19,22 @@ export const threads = pgTable("threads", {
   updatedAt: timestamp("updated_at").notNull(),
 });
 
+/**
+ * #27828 — per-conversation active RPI tenant (X-ClientID). Light store keyed by
+ * (conversationId, userId, workspaceId); conversationId is the AI SDK chat id (a
+ * non-UUID string), so it is text, not the uuid thread id. userId = per-USER
+ * isolation. Mirrors the SQLite `conversationClients` table.
+ */
+export const conversationClients = pgTable("conversation_clients", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull(),
+  userId: text("user_id").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  clientId: text("client_id").notNull(),
+  clientName: text("client_name"),
+  updatedAt: timestamp("updated_at").notNull(),
+});
+
 export const messages = pgTable("messages", {
   id: uuid("id").defaultRandom().primaryKey(),
   threadId: uuid("thread_id")

@@ -49,6 +49,8 @@ const REFRESH_TRIGGER_MARGIN_MS = 60_000;
 interface JwtPayload {
   rpiAccessToken?: string;
   rpiExpiresAt?: number;
+  /** Per-request RPI Environment Location — forwarded as X-RPI-URL. */
+  rpiUrl?: string;
   [key: string]: unknown;
 }
 
@@ -77,6 +79,9 @@ export async function POST(
   // actually near expiry; most requests skip that hop entirely.
   let accessToken: string | undefined;
   let expiresAt: number | undefined;
+  // Per-request Environment Location from the session (set at login). Unchanged
+  // by a token refresh; forwarded to apps/server as X-RPI-URL.
+  let rpiUrl: string | undefined;
   if (process.env.AUTH_SECRET) {
     try {
       const decoded = (await getToken({
@@ -87,6 +92,9 @@ export async function POST(
       })) as JwtPayload | null;
       if (typeof decoded?.rpiAccessToken === "string") {
         accessToken = decoded.rpiAccessToken;
+      }
+      if (typeof decoded?.rpiUrl === "string") {
+        rpiUrl = decoded.rpiUrl;
       }
       if (typeof decoded?.rpiExpiresAt === "number") {
         expiresAt = decoded.rpiExpiresAt;
@@ -173,6 +181,8 @@ export async function POST(
   // Per-user RPI token — read from the rotated JWT, attached as X-RPI-Token
   // matching the contract apps/server already understands.
   if (accessToken) headers["X-RPI-Token"] = accessToken;
+  // Per-request Environment Location — apps/server re-validates it (SSRF).
+  if (rpiUrl) headers["X-RPI-URL"] = rpiUrl;
 
   let upstream: Response;
   try {

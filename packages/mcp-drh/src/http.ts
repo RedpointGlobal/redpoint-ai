@@ -103,9 +103,18 @@ if (drhConfig) {
     drhConfig.defaultDatabaseId,
   );
 } else {
+  // drhConfig is null for TWO distinct reasons — do not conflate them: either the
+  // required vars are unset (loadDrhConfigFromEnv returned null) OR they are set
+  // but a value is invalid (it THREW, already logged "configuration rejected"
+  // above — e.g. a non-numeric DRH_DEFAULT_DATABASE_ID → NaN). The old message
+  // hardcoded "DRH_API_URL / DRH_DEFAULT_CLIENT_ID unset", which lied whenever the
+  // real cause was an invalid value. Report the actual reason.
+  const why = missingDrhVars.length
+    ? `missing: ${missingDrhVars.join(", ")}`
+    : "the DRH_* vars are set but a value is invalid — see the 'configuration rejected' error above";
   console.error(
-    "[mcp-drh] DRH backend not configured (DRH_API_URL / DRH_DEFAULT_CLIENT_ID unset) — " +
-      "no tools exposed. Set the DRH_* vars to enable the live client.",
+    `[mcp-drh] DRH backend not configured (${why}) — no tools exposed. ` +
+      "Set/fix the DRH_* vars to enable the live client.",
   );
 }
 

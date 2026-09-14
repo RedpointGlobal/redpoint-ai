@@ -37,12 +37,32 @@ async function api<T>(path: string, options?: RequestInit, token?: string): Prom
   return res.json();
 }
 
-export async function listWorkspaces(): Promise<Workspace[]> {
-  return api("/api/v1/workspaces");
+/**
+ * List workspaces. Called from the landing page (a SERVER component), so it
+ * accepts optional forward headers built server-side by lib/server-forward.ts
+ * — under AUTH_REQUIRED=true the gate 401s an unauthenticated read, blanking
+ * the picker ("No workspace available"). Under auth=false `forwardHeaders` is
+ * empty and this behaves exactly as before.
+ */
+export async function listWorkspaces(
+  forwardHeaders?: Record<string, string>,
+): Promise<Workspace[]> {
+  return api("/api/v1/workspaces", { headers: forwardHeaders });
 }
 
+/**
+ * Get one workspace. Client-only caller (workspace/[id] page, info-panel
+ * Config tab), so it routes through the same-origin auth-forwarding proxy —
+ * the browser sends the HttpOnly session cookie automatically and the proxy
+ * attaches the credential server-side (raw token never reaches JS). Mirrors
+ * getWorkspaceRuntimeStatus below.
+ */
 export async function getWorkspace(id: string): Promise<Workspace> {
-  return api(`/api/v1/workspaces/${id}`);
+  const res = await fetch(`/api/proxy/workspaces/${id}`);
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
 }
 
 export async function createWorkspace(data: {
@@ -76,8 +96,17 @@ export interface WorkspaceTool {
   inputSchema: unknown;
 }
 
+/**
+ * Get a workspace's tool list (Tools tab). Client-only caller (info-panel), so
+ * it routes through the same-origin auth-forwarding proxy — same rationale as
+ * getWorkspace above.
+ */
 export async function getWorkspaceTools(id: string): Promise<WorkspaceTool[]> {
-  return api(`/api/v1/workspaces/${id}/tools`);
+  const res = await fetch(`/api/proxy/workspaces/${id}/tools`);
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
 }
 
 export interface RuntimeStatus {
@@ -118,6 +147,12 @@ export interface RuntimeStatus {
     }>;
   };
   errors: string[];
+  /** Server-global economic-viability instrumentation health (same in every
+   *  workspace's panel). Absent on older servers. */
+  instrumentation?: {
+    enabled: boolean;
+    sinkWritable: boolean;
+  };
 }
 
 export async function getWorkspaceRuntimeStatus(

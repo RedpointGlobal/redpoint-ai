@@ -42,6 +42,9 @@ drizzle/
 *.log
 pino-pretty.log
 
+# Instrumentation (generation 7) — local dev sink, never committed
+instrumentation-events.jsonl
+
 # Test coverage
 coverage/
 

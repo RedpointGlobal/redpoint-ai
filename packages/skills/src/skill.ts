@@ -20,6 +20,26 @@ export const SkillFrontmatterSchema = z.object({
    * prompt nothing. Absent/false = today's inline behavior.
    */
   dispatch: z.boolean().optional(),
+  /**
+   * clientId-foundation opt-in. When true, the shared `CLIENTID_FOUNDATION`
+   * block (the canonical 3-case `clientId`-handling contract) is prepended to
+   * this skill's sub-agent system prompt centrally in router.ts — the same
+   * mechanism experts use for GROUNDING_PREAMBLE — instead of the block being
+   * hand-copied into the SKILL.md body (which drifted across ~17 skills). An
+   * EXPLICIT opt-in, not "all RPI skills": a skill gets the foundation iff it
+   * declares this, so there are no implicit carve-outs (DRH skills + rpi-clients
+   * simply don't set it). Absent/false = no foundation injected.
+   */
+  clientIdFoundation: z.boolean().optional(),
+  /**
+   * Opt in to the current-date preamble on THIS skill's dispatched sub-agent
+   * (#27897). Set ONLY on skills whose operations do relative-date math (e.g.
+   * rpi-interactions' runs op resolving "last 30 days"). Blanket-injecting the
+   * date on every sub-agent tipped a borderline rpi-admin tool pick (list-clients
+   * regression), so it's opt-in, mirroring clientIdFoundation. The ORCHESTRATOR
+   * always gets the date (chat.ts) regardless of this flag. Absent/false = no date.
+   */
+  dateGrounding: z.boolean().optional(),
 });
 
 export type SkillFrontmatter = z.infer<typeof SkillFrontmatterSchema>;
@@ -55,6 +75,18 @@ export interface Skill {
    * inlined into the router prompt. See `isDispatchable`/`isInlinedExpert`.
    */
   dispatch?: boolean;
+  /**
+   * clientId-foundation opt-in. When true, the shared CLIENTID_FOUNDATION block
+   * is prepended to this skill's sub-agent system prompt in router.ts (mirrors
+   * the expert GROUNDING_PREAMBLE inject). Explicit opt-in — no implicit
+   * carve-outs. Absent/false = no foundation injected.
+   */
+  clientIdFoundation?: boolean;
+  /**
+   * Opt in to the current-date preamble on this skill's dispatched sub-agent
+   * (#27897). Only skills whose ops do relative-date math set it (rpi-interactions).
+   */
+  dateGrounding?: boolean;
 }
 
 /**

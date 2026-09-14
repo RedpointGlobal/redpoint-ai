@@ -7,6 +7,12 @@
  * param on `tools/list`.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  resolveToolAuth,
+  classifyToolError,
+  handleScopeAuthError,
+  ScopeAuthError,
+} from "./auth-scope.js";
 
 export const TOOL_CATEGORIES = [
   "audiences",
@@ -17,6 +23,18 @@ export const TOOL_CATEGORIES = [
   "folders",
   "interactions",
   "selection-rules",
+  // Generated-tool categories (#27634). Each new domain adds its category here +
+  // a CATEGORY_DESCRIPTIONS entry (compile-gated) as its overlay lands.
+  "configuration",
+  "files",
+  "cluster",
+  "data-connectors",
+  "workflows",
+  "operations",
+  "data-import",
+  "content-preview",
+  "jobs",
+  "smart-assets",
 ] as const;
 
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
@@ -42,10 +60,46 @@ export function createToolRegistrar(
       ...(config as Record<string, unknown>),
       _meta: { ...(cfg._meta ?? {}), category },
     };
+
+    // Auth-scoping wrapper — the single choke point every tool passes through.
+    // (1) Resolve the identity centrally (auth-scope.resolveToolAuth): inject
+    //     the resolved token so the handler's `extra.authInfo.token` flows to the
+    //     RPI client, or fail-closed (ScopeAuthError) for a user tool with no
+    //     user token under AUTH_REQUIRED=true — never a silent proxy escalation.
+    // (2) Classify handler errors into clean, role-appropriate messages (401
+    //     session / 403 not-authorized), never a raw status/body.
+    const origHandler = handler as (
+      args: unknown,
+      extra: { authInfo?: { token?: string } & Record<string, unknown> } & Record<
+        string,
+        unknown
+      >,
+    ) => unknown;
+    const wrapped = async (args: unknown, extra: Parameters<typeof origHandler>[1]) => {
+      let token: string;
+      try {
+        token = await resolveToolAuth(name, extra?.authInfo?.token);
+      } catch (e) {
+        if (e instanceof ScopeAuthError) return handleScopeAuthError(e);
+        throw e;
+      }
+      const injectedExtra = {
+        ...extra,
+        authInfo: { ...(extra?.authInfo ?? {}), token },
+      };
+      try {
+        return await origHandler(args, injectedExtra);
+      } catch (e) {
+        const graceful = classifyToolError(e, name);
+        if (graceful) return graceful;
+        throw e;
+      }
+    };
+
     return (server.registerTool as (n: string, c: unknown, h: unknown) => unknown)(
       name,
       stamped,
-      handler,
+      wrapped,
     );
   };
   return register as unknown as McpServer["registerTool"];

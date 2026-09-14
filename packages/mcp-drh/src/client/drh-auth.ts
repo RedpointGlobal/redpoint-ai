@@ -12,6 +12,8 @@
  * mcp-rpi is not refactored into a shared lib).
  */
 
+import { safeErrorDetail } from "./http-error.js";
+
 /** POST /api-op/v1/auth/signon response — opaque token, no expiry. */
 export interface DRHTokenResponse {
   token: string;
@@ -58,7 +60,7 @@ export class DRHAuthService {
     });
     if (!response.ok) {
       throw new Error(
-        `DRH signon failed: ${response.status} ${response.statusText} — ${await safeText(response)}`,
+        `DRH signon failed: ${safeErrorDetail(response.status, response.statusText)}`,
       );
     }
     const data = (await response.json()) as DRHTokenResponse;
@@ -119,13 +121,5 @@ export class DRHAuthService {
       `DRH proxy user "${this.proxyUser}" signed on (token cached ${this.tokenTtlMs / 1000}s)`,
     );
     return cached;
-  }
-}
-
-async function safeText(r: Response): Promise<string> {
-  try {
-    return await r.text();
-  } catch {
-    return "";
   }
 }

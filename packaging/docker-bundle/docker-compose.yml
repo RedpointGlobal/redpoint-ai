@@ -2,6 +2,15 @@
 # Images are loaded from rp-ai-images.tar by start_redpoint-ai.bat; env comes from
 # the single ./.env in this folder. Do not run this from the source repo — use the
 # dev docker-compose.yml there. Reps: just double-click start_redpoint-ai.bat.
+#
+# ENV MODEL (single source of truth, no drift): each service loads the FULL ./.env
+# superset verbatim via `env_file`, then `environment:` applies ONLY the container
+# VALUE-OVERRIDES — the handful of values that must differ inside the compose
+# network (reach peers by service NAME not localhost, container ports/paths). No
+# key is defined here that isn't in .env, and nothing diverges from the web app's
+# config except these documented overrides. In particular AUTH_REQUIRED is NOT set
+# here: it comes from .env (auth=true), exactly like the web app — a past bug baked
+# AUTH_REQUIRED=false here and silently diverged the container from the app.
 services:
   server:
     image: rp-ai-server:__VERSION__
@@ -9,24 +18,21 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    env_file: .env
     environment:
+      # --- container value-overrides only (keys all exist in .env) ---
       - PORT=3000
-      - AUTH_REQUIRED=false
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-}
-      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
-      - AZURE_OPENAI_RESOURCE_NAME=${AZURE_OPENAI_RESOURCE_NAME:-}
-      - AZURE_OPENAI_DEPLOYMENT_ID=${AZURE_OPENAI_DEPLOYMENT_ID:-}
-      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-}
-      - SEED_RPI_MCP_URL=http://mcp-rpi:3002/mcp
-      - DRH_MCP_URL=http://mcp-drh:3003/mcp
-      - DRH_API_URL=${DRH_API_URL:-}
-      - DB_FILE_NAME=/app/data/redpoint-ai.db
+      - SEED_RPI_MCP_URL=http://mcp-rpi:3002/mcp # reach mcp by service name, not localhost
+      - DRH_MCP_URL=http://mcp-drh:3003/mcp # reach mcp by service name, not localhost
+      - DB_FILE_NAME=/app/data/redpoint-ai.db # SQLite path on the named volume below
+      - INSTRUMENTATION_SINK_PATH=/app/instrumentation/instrumentation-events.jsonl # host bind-mount path
     volumes:
       # Named volume only (SQLite persistence). NO ./skills bind-mount — the
       # skills are baked into the image; a bind-mount would blank them out.
       - server-data:/app/data
+      # Instrumentation output — host bind-mount so the JSONL lands next to the
+      # .bat launchers, retrievable and surviving container recreation.
+      - ./instrumentation:/app/instrumentation
     healthcheck:
       test: ["CMD", "bun", "--eval", "fetch('http://localhost:3000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
@@ -40,16 +46,11 @@ services:
     restart: unless-stopped
     ports:
       - "3001:3001"
+    env_file: .env
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://server:3000}
-      - AUTH_REQUIRED=false
-      - AUTH_SECRET=${AUTH_SECRET:-changeme-generate-with-openssl-rand-base64-32}
-      - AUTH_TRUST_HOST=true
-      - AUTH_URL=${AUTH_URL:-http://localhost:3001}
-      - RPI_INTEGRATION_API_URL=${RPI_INTEGRATION_API_URL:-}
-      - RPI_OAUTH_CLIENT_ID=${RPI_OAUTH_CLIENT_ID:-}
-      - RPI_OAUTH_CLIENT_SECRET=${RPI_OAUTH_CLIENT_SECRET:-}
-      - RPI_DEFAULT_CLIENT_ID=${RPI_DEFAULT_CLIENT_ID:-}
+      # --- container value-overrides only (keys all exist in .env) ---
+      - NEXT_PUBLIC_API_URL=http://server:3000 # server by service name; the web's proxy routes call this
+      - AUTH_TRUST_HOST=true # NextAuth: trust the proxied Host so the callback URL derives from the rep's browser origin
     depends_on:
       server:
         condition: service_healthy
@@ -66,16 +67,10 @@ services:
     restart: unless-stopped
     ports:
       - "3002:3002"
+    env_file: .env
     environment:
-      - RPI_MCP_HTTP_PORT=3002
-      - AUTH_REQUIRED=false
-      - RPI_INTEGRATION_API_URL=${RPI_INTEGRATION_API_URL:-}
-      - RPI_OAUTH_CLIENT_ID=${RPI_OAUTH_CLIENT_ID:-}
-      - RPI_OAUTH_CLIENT_SECRET=${RPI_OAUTH_CLIENT_SECRET:-}
-      - RPI_DEFAULT_CLIENT_ID=${RPI_DEFAULT_CLIENT_ID:-}
-      - RPI_PROXY_USER=${RPI_PROXY_USER:-}
-      - RPI_PROXY_PASS=${RPI_PROXY_PASS:-}
-      - RPI_PROXY_ENABLED=${RPI_PROXY_ENABLED:-}
+      # --- container value-overrides only (keys all exist in .env) ---
+      - RPI_MCP_HTTP_PORT=3002 # container port
     # No healthcheck: the slim runtime (debian:12-slim + compiled binary only) has
     # no bun/curl/wget to probe /health, and nothing depends_on this service being
     # healthy. Container liveness is real regardless — a crashed process exits it.
@@ -86,17 +81,10 @@ services:
     restart: unless-stopped
     ports:
       - "3003:3003"
+    env_file: .env
     environment:
-      - DRH_MCP_HTTP_PORT=3003
-      - AUTH_REQUIRED=false
-      - DRH_API_URL=${DRH_API_URL:-}
-      - DRH_DEFAULT_CLIENT_ID=${DRH_DEFAULT_CLIENT_ID:-}
-      - DRH_DEFAULT_DATABASE_ID=${DRH_DEFAULT_DATABASE_ID:-}
-      - DRH_PROXY_USER=${DRH_PROXY_USER:-}
-      - DRH_PROXY_PASS=${DRH_PROXY_PASS:-}
-      - DRH_PROXY_ENABLED=${DRH_PROXY_ENABLED:-}
-      - DRH_TOKEN_TTL_SECONDS=${DRH_TOKEN_TTL_SECONDS:-}
-      - DRH_CORS_ORIGINS=${DRH_CORS_ORIGINS:-}
+      # --- container value-overrides only (keys all exist in .env) ---
+      - DRH_MCP_HTTP_PORT=3003 # container port
     # No healthcheck: see mcp-rpi above — slim runtime has no probe tool and nothing
     # depends_on this being healthy; a crashed process still exits the container.
 

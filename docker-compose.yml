@@ -29,6 +29,12 @@ services:
       # even when DRH is fully configured. The bundle compose has always set it.
       - DRH_MCP_URL=http://mcp-drh:3003/mcp
       - DRH_API_URL=${DRH_API_URL:-}
+      # apps/server validates an RPI-native web session's X-RPI-Token against
+      # RPI's validate-token-status (auth middleware, Mechanism B). Needs the RPI
+      # Integration API base; without it validation fails closed (401), so an
+      # RPI-native user can't connect under AUTH_REQUIRED=true. Only this var —
+      # no other RPI secrets are forwarded to the server.
+      - RPI_INTEGRATION_API_URL=${RPI_INTEGRATION_API_URL:-}
       - A2A_ENABLED=${A2A_ENABLED:-false}
       - A2A_WORKSPACE_ID=${A2A_WORKSPACE_ID:-}
       - A2A_BEARER_TOKEN=${A2A_BEARER_TOKEN:-}

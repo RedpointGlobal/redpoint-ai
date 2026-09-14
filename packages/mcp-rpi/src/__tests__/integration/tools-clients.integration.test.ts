@@ -57,8 +57,9 @@ if (shouldSkip) {
 
 describe.skipIf(shouldSkip)("Clients tool chain (live)", () => {
   let apiClient: RPIApiClient;
+  let proxyToken: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const authService = new RPIAuthService(
       process.env.RPI_INTEGRATION_API_URL!,
       process.env.RPI_OAUTH_CLIENT_ID!,
@@ -71,13 +72,14 @@ describe.skipIf(shouldSkip)("Clients tool chain (live)", () => {
       authService,
       process.env.RPI_DEFAULT_CLIENT_ID!,
     );
+    proxyToken = await authService.getProxyToken();
   });
 
   it("chained clients flow: list → get_by_id → get_by_name", async () => {
     // 1. List all clients
     const all = await apiClient.get<{
       clients?: Array<{ id?: string | null; name?: string | null }>;
-    }>(undefined, "/cluster/operations/clients");
+    }>(proxyToken, "/cluster/operations/clients");
     const list = all?.clients ?? [];
 
     if (list.length === 0) {
@@ -122,7 +124,7 @@ describe.skipIf(shouldSkip)("Clients tool chain (live)", () => {
     // exists on the cluster, otherwise every tool call is destined to fail.
     const all = await apiClient.get<{
       clients?: Array<{ id?: string | null; name?: string | null }>;
-    }>(undefined, "/cluster/operations/clients");
+    }>(proxyToken, "/cluster/operations/clients");
     const list = all?.clients ?? [];
     const configured = process.env.RPI_DEFAULT_CLIENT_ID!;
     const match = findByIdExact(list, configured);

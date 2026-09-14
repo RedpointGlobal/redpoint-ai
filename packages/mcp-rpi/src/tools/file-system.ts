@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { RPIApiClient } from "../client/rpi-api.js";
 import type { components } from "../client/rpi-types.js";
 import { createToolRegistrar } from "../tool-categories.js";
+import { targetUrlOf } from "./generated-shared.js";
 import { fetchFileInfo } from "../client/search.js";
 
 type FileStorageItem = components["schemas"]["FileStorageItemJsonResponseMessage"];
@@ -48,6 +49,7 @@ export function registerFileSystemTools(
   registerTool(
     "get_file_info_by_id",
     {
+      _meta: { endpoints: ["/client/file-system/file-info"] },
       title: "Get File Info by ID",
       description:
         "Look up basic file/object info by its RPI ID — works for ANY file type (audiences, interactions, selection rules, channels, content, etc.). GET /client/file-system/file-info. Default response is a compact card `{id, name, typeName, subTypeName, fullPath, parentFolderName}` — `fullPath` is the object's full path including ancestor folders (this endpoint populates it, unlike search-file-infos); pass verbose:true for the full FileStorageItemJsonResponseMessage. Use this when you just need to resolve a GUID to a human-readable name or full path — it's cheaper than the type-specific getters.",
@@ -73,7 +75,7 @@ export function registerFileSystemTools(
           rpiClient,
           userToken,
           id,
-          { clientId, verbose: true },
+          { clientId, verbose: true, baseUrl: targetUrlOf(extra) },
         );
         if (verbose) return jsonContent(raw);
         return jsonContent({

@@ -18,6 +18,7 @@ import {
   getFinalText,
   getRoutedSkill,
   getSubAgentToolCalls,
+  getOrchestratorToolCalls,
   looksClarifying,
   percentiles,
   resolveWorkspaceId,
@@ -26,12 +27,39 @@ import {
   runN,
   runPrompt,
 } from "./helpers.js";
-import { selectScenarios, selectDrhScenarios } from "./scenarios.js";
+import { selectScenarios, selectDrhScenarios, DRH_SCENARIOS } from "./scenarios.js";
 // Relative, not the workspace alias — tests/ is not a workspace package.
 import { WORKSPACE_NAMES } from "../../packages/shared/src/index.js";
 
 const envCheck = accuracyEvaluationEnvOk();
 const shouldSkip = !envCheck.ok;
+
+// Data Readiness Hub scenarios only pass when mcp-drh is actually reachable
+// (DRH workspace's MCP connection live with tools). The old design let them
+// early-return green when it wasn't — a test with no expect(), which reads as a
+// pass and makes the eval's exit code untrustworthy. Probe reachability HERE, at
+// collection time (top-level await; the server is already healthy before the
+// eval starts), and gate the whole block on a NATIVE describe.skipIf. Reachable
+// → the block runs exactly as before; not reachable → bun reports 7 SKIPS, not 7
+// silent passes, so pass-count == expect()-count. Auto-detect is preserved: any
+// harness that DOES start mcp-drh still runs them. Probe only on the eval path
+// (shouldSkip=false) so a normal `bun run test` never makes a network call here.
+let drhUsable = false;
+if (!shouldSkip) {
+  try {
+    const drhId = await resolveWorkspaceIdByName(WORKSPACE_NAMES.drh);
+    drhUsable = !!(drhId && (await isWorkspaceUsable(drhId)));
+  } catch {
+    drhUsable = false;
+  }
+  if (!drhUsable) {
+    console.log(
+      `[accuracy-evaluation] ${DRH_SCENARIOS.length} Data Readiness Hub scenarios SKIPPED (native): ` +
+        `mcp-drh not reachable (server on :3003 down or workspace MCP not connected). ` +
+        `Start mcp-drh with DRH configured to run them.`,
+    );
+  }
+}
 
 const THRESHOLD = Number(process.env.ACCURACY_EVALUATION_THRESHOLD || "0.8");
 const FORCE_FAIL_ID = process.env.ACCURACY_EVALUATION_FORCE_FAIL_ID || "";
@@ -61,7 +89,10 @@ describe.skipIf(shouldSkip)(`LLM accuracy — routing`, () => {
 
   for (const sc of scenarios) {
     it(
-      `[${sc.id}] "${sc.prompt}" → ${sc.expectedSkill ?? "clarifying-question"}`,
+      `[${sc.id}] "${sc.prompt}" → ${
+        sc.expectedSkill ??
+        (sc.expectedOrchestratorToolPattern ? "orchestrator-tool" : "clarifying-question")
+      }`,
       async () => {
         const failFactory = (err: unknown) => ({
           passed: false,
@@ -99,7 +130,19 @@ describe.skipIf(shouldSkip)(`LLM accuracy — routing`, () => {
           // see LLM-typo-class flakes without false-positive routing
           // failures. See the assertion-shape comment block below.
           let firstDispatchDeviation = false;
-          if (sc.expectedSkill === null) {
+          if (sc.expectedOrchestratorToolPattern) {
+            // Phase 2 (#27957) orchestrator-tool routing: a dashboard prompt routes
+            // to render_view_dashboard DIRECTLY (no execute_skill). Assert the parent
+            // called the expected tool with the expected viewId — the routing DECISION.
+            const orch = getOrchestratorToolCalls(traceEvents);
+            passed = orch.some(
+              (t) =>
+                sc.expectedOrchestratorToolPattern!.test(t.toolName) &&
+                (!sc.expectedViewId ||
+                  (t.args as { viewId?: string } | undefined)?.viewId ===
+                    sc.expectedViewId),
+            );
+          } else if (sc.expectedSkill === null) {
             // Ambiguous: must NOT dispatch any execute_skill AND parent must
             // have spoken (a silent crash should not green via "zero dispatch").
             passed = looksClarifying(traceEvents, parentText);
@@ -118,7 +161,31 @@ describe.skipIf(shouldSkip)(`LLM accuracy — routing`, () => {
             const containsOk =
               !sc.textContains ||
               finalText.toLowerCase().includes(sc.textContains.toLowerCase());
-            passed = !!(routingOk && textOk && containsOk);
+            // Tool-hit guard (#27634): when a scenario pins expectedToolNamePattern,
+            // the sub-agent must have called that exact (namespaced) MCP tool —
+            // proves the description routed to the right tool, not just the skill.
+            // Backward-compatible: undefined pattern → toolHitOk true (the existing
+            // 14 scenarios are unaffected). Mirrors the DRH block below.
+            const toolHitOk =
+              !sc.expectedToolNamePattern ||
+              subAgentToolCalls.some((t) =>
+                sc.expectedToolNamePattern!.test(t.toolName),
+              );
+            // Negative tool-hit guard: a forbidden tool must NOT have been called
+            // (e.g. a plain connection check must not invoke the cluster-admin
+            // health tool). Undefined pattern → true (unaffected).
+            const forbiddenToolOk =
+              !sc.forbiddenToolNamePattern ||
+              !subAgentToolCalls.some((t) =>
+                sc.forbiddenToolNamePattern!.test(t.toolName),
+              );
+            passed = !!(
+              routingOk &&
+              textOk &&
+              containsOk &&
+              toolHitOk &&
+              forbiddenToolOk
+            );
           }
           return {
             passed,
@@ -264,8 +331,8 @@ describe.skipIf(shouldSkip)(`LLM accuracy — routing`, () => {
 // turn touching a drh__ tool) holds by construction: drh tools live only on the
 // Data Readiness Hub workspace's mcp connection.
 // ---------------------------------------------------------------------------
-describe.skipIf(shouldSkip)(`LLM accuracy — Data Readiness Hub two-layer routing`, () => {
-  if (shouldSkip) return;
+describe.skipIf(shouldSkip || !drhUsable)(`LLM accuracy — Data Readiness Hub two-layer routing`, () => {
+  if (shouldSkip || !drhUsable) return;
   const { scenarios, n } = selectDrhScenarios();
   let drhWorkspaceId: string | null = null;
 

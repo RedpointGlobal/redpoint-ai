@@ -1,6 +1,7 @@
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
 import type { McpConnection } from "@redpoint-ai/shared";
 import type { Tool } from "ai";
+import { ephemeralAuthHeaders } from "./forward-headers.js";
 import { mcpCalls } from "../routes/metrics.js";
 import {
   createPatchedTransport,
@@ -37,6 +38,17 @@ function sanitizeEnv(env?: Record<string, string>): Record<string, string> | und
 }
 
 /**
+ * Resolve the per-request active client id from either a static value or a live
+ * getter. A getter is read HERE, at tool-call time, so a mid-turn
+ * set_active_tenant switch is reflected by subsequent calls in the same turn.
+ */
+export function resolveActiveClientId(
+  activeClientId: string | (() => string | undefined) | undefined,
+): string | undefined {
+  return typeof activeClientId === "function" ? activeClientId() : activeClientId;
+}
+
+/**
  * Manages MCP client connections per workspace.
  * Lazily creates and caches connections. Namespaces tools by MCP server name.
  */
@@ -45,23 +57,12 @@ export class MCPClientManager {
   private clients = new Map<string, MCPClient>();
   // Cache: "workspaceId::serverName" -> PatchedTransport (for capability access)
   private transports = new Map<string, PatchedTransport>();
-  /**
-   * Current RPI client/tenant selection, injected as the `clientId` arg on
-   * every MCP tool call so downstream RPI requests carry the right
-   * `X-ClientID` header. Seeded from `RPI_DEFAULT_CLIENT_ID` at construction.
-   * Setter reserved for a future user-facing client switcher.
-   */
-  private currentClientId: string | undefined = process.env.RPI_DEFAULT_CLIENT_ID;
-
-  /** Override the current RPI client ID (tenant) for subsequent tool calls. */
-  setCurrentClientId(clientId: string | undefined): void {
-    this.currentClientId = clientId;
-  }
-
-  /** Read the current RPI client ID (tenant) used for tool calls. */
-  getCurrentClientId(): string | undefined {
-    return this.currentClientId;
-  }
+  // #27828 — the RPI client/tenant (X-ClientID) is NO LONGER a mutable field on
+  // this process-wide singleton (that leaked one user's/conversation's tenant to
+  // everyone). It is threaded PER-REQUEST via the `activeClientId` param of
+  // getToolsForWorkspace, resolved by the caller from per-conversation+per-user
+  // state. RPI_DEFAULT_CLIENT_ID remains only the fallback default (applied
+  // per-request below), never a mutable global.
 
   /**
    * Get all AI SDK tools for a workspace's MCP connections.
@@ -94,6 +95,17 @@ export class MCPClientManager {
     workspaceId: string,
     mcpConnections: McpConnection[],
     userRpiToken?: string,
+    // Per-request RPI "Environment Location" (validated X-RPI-URL). Baked into
+    // the ephemeral transport as X-RPI-URL alongside the Bearer so mcp-rpi
+    // targets the rep's instance for this request. Undefined = default instance.
+    userRpiUrl?: string,
+    // Per-request RPI CLIENT/tenant (X-ClientID) for THIS request only (#27828).
+    // Resolved by the caller from per-conversation + per-user state — never a
+    // singleton. May be a static string OR a live GETTER: a mid-turn
+    // set_active_tenant switch must apply to SUBSEQUENT tool calls in the SAME
+    // turn, so the getter is read at CALL TIME (not baked at build time). Undefined
+    // → fall back to RPI_DEFAULT_CLIENT_ID. Overrides any clientId the LLM set.
+    activeClientId?: string | (() => string | undefined),
   ): Promise<Record<string, Tool>> {
     const allTools: Record<string, Tool> = {};
 
@@ -102,11 +114,14 @@ export class MCPClientManager {
       let client: MCPClient;
 
       if (userRpiToken && conn.transport === "http" && conn.url) {
-        // Ephemeral path — fresh client+transport with the user's Bearer.
-        // No cache write; this client lives for the request only.
-        client = await this.createClient(conn, undefined, {
-          Authorization: `Bearer ${userRpiToken}`,
-        });
+        // Ephemeral path — fresh client+transport with the user's Bearer (and
+        // the per-request location header when set). No cache write; this client
+        // lives for the request only.
+        client = await this.createClient(
+          conn,
+          undefined,
+          ephemeralAuthHeaders(userRpiToken, userRpiUrl),
+        );
       } else {
         // Cached path — shared across workspaces with the same connection.
         const cached = this.clients.get(cacheKey);
@@ -150,13 +165,16 @@ export class MCPClientManager {
           execute: tool.execute
             ? async (args: any, options: any) => {
                 mcpCalls.inc({ server: conn.name, tool: toolName });
-                // Inject the current RPI client/tenant selection. Overrides
-                // whatever the LLM may have set for `clientId` so the X-ClientID
-                // header downstream always reflects the agent's current choice.
+                // Inject the per-request RPI client/tenant, resolved at CALL TIME
+                // so a mid-turn set_active_tenant switch applies to this and every
+                // later call in the same turn. Overrides any clientId the LLM set;
+                // undefined → deployment default. Per-request closure → no cross-
+                // request / cross-user bleed.
+                const cid =
+                  resolveActiveClientId(activeClientId) ??
+                  process.env.RPI_DEFAULT_CLIENT_ID;
                 const enrichedArgs =
-                  this.currentClientId !== undefined
-                    ? { ...args, clientId: this.currentClientId }
-                    : args;
+                  cid !== undefined ? { ...args, clientId: cid } : args;
                 return tool.execute!(enrichedArgs, options);
               }
             : undefined,

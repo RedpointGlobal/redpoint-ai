@@ -21,6 +21,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
 - `rpi-domain-expert` — a dispatched, grounded domain-knowledge expert for building RPI campaigns (attributes, selection rules (segments), audiences, interactions, and the design strategy behind them). Tool-less; its knowledge loads into a sub-agent only on a knowledge-intent hit.
+- **SSO login via Keycloak (OIDC)** — the intended primary auth path: a NextAuth OIDC provider doing `authorization_code` + PKCE (S256) as a **public client** (no client secret). Configuration is **discovered, not hardcoded** — the realm issuer comes from the identity provider's public `openIDIssuer` advertised in `login-settings`, and NextAuth resolves authorize/token/jwks from that issuer's `.well-known`. The issued JWT is accepted directly by the backend and by the app-server OIDC branch. Login-hardening: **brand-free generic labels**, and credential fields render readonly-until-focus so the browser can't pre-fill across the stacked forms.
 
 ### Changed
 

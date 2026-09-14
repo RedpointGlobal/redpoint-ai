@@ -130,12 +130,12 @@ export function createPatchedTransport(config: {
       if (!response.ok) {
         const requestId = (message as Record<string, unknown>)?.id;
         if (requestId != null) {
-          let errorDetail = `HTTP ${response.status}`;
-          try {
-            errorDetail = await response.text();
-          } catch {
-            /* ignore */
-          }
+          // SECURITY: client-facing error carries status + statusText ONLY —
+          // never the raw upstream body (leaks internal URLs / HTML / stack
+          // traces / credential-adjacent detail into the JSON-RPC error the
+          // agent surfaces). Mirrors the onerror else-branch below. Do NOT
+          // reintroduce response.text() here — the error-leak guard asserts it.
+          const errorDetail = `${response.status} ${response.statusText}`;
           const errorResponse = {
             jsonrpc: "2.0" as const,
             id: requestId as string | number,

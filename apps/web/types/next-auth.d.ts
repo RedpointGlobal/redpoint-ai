@@ -34,6 +34,11 @@ declare module "next-auth" {
     rpiAccessToken?: string;
     rpiRefreshToken?: string;
     rpiExpiresAt?: number;
+    /** Which provider minted the RPI token — routes lazy refresh to the right
+     * endpoint ("rpi-native" → RPI /connect/token; "keycloak-sso" → Keycloak). */
+    rpiAuthSource?: "rpi-native" | "keycloak-sso";
+    /** Per-request RPI Environment Location URL (validated); forwarded as X-RPI-URL. */
+    rpiUrl?: string;
   }
   interface Session {
     apiKey?: string;
@@ -59,5 +64,9 @@ declare module "next-auth/jwt" {
     rpiRefreshToken?: string;
     /** Epoch ms when access_token expires; refreshed lazily in jwt callback. */
     rpiExpiresAt?: number;
+    /** Provider that minted the RPI token — routes the lazy refresh. */
+    rpiAuthSource?: "rpi-native" | "keycloak-sso";
+    /** Per-request RPI Environment Location URL; forwarded as X-RPI-URL. */
+    rpiUrl?: string;
   }
 }

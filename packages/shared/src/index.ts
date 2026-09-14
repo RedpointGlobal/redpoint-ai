@@ -39,6 +39,13 @@ export {
 } from "./schemas/workspace.js";
 
 export { LLMProviderSchema } from "./schemas/provider.js";
+export {
+  ChartSpecSchema,
+  ChartTypeSchema,
+  CHART_TYPES,
+} from "./schemas/chart.js";
+export { StatsSpecSchema, StatTileSchema } from "./schemas/stats.js";
+export { DashboardSpecSchema } from "./schemas/dashboard.js";
 
 export {
   MessageSchema,
@@ -59,6 +66,9 @@ export type {
 } from "./schemas/workspace.js";
 
 export type { LLMProvider } from "./schemas/provider.js";
+export type { ChartSpec, ChartType } from "./schemas/chart.js";
+export type { StatsSpec, StatTile } from "./schemas/stats.js";
+export type { DashboardSpec } from "./schemas/dashboard.js";
 
 export type {
   Message,
@@ -68,3 +78,17 @@ export type {
 } from "./schemas/thread.js";
 
 export type { TelemetryEvent } from "./types/telemetry.js";
+
+// Instrumentation — pure spine: event shape, sink interface, registry.
+export type {
+  InstrumentationEvent,
+  InstrumentationSink,
+} from "./instrumentation.js";
+export {
+  configureInstrumentation,
+  isInstrumentationEnabled,
+  emitInstrumentationEvent,
+  probeInstrumentationSink,
+} from "./instrumentation.js";
+
+export { isAllowedRpiUrl, rpiUrlAllowlist } from "./rpi-url-allowlist.js";

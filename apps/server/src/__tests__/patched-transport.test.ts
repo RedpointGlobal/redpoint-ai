@@ -100,8 +100,16 @@ describe("createPatchedTransport", () => {
     expect(received.result.tools).toEqual([{ name: "list_audiences" }]);
   });
 
-  it("synthesizes a JSON-RPC error response on HTTP error when request has an id", async () => {
-    stubFetch(async () => new Response("Unauthorized", { status: 401 }));
+  it("synthesizes a JSON-RPC error response on HTTP error when request has an id (status only, no body leak)", async () => {
+    // SECURITY: the raw upstream body must never reach the JSON-RPC error the
+    // agent surfaces — status + statusText only. (See the leak guard test.)
+    stubFetch(
+      async () =>
+        new Response("SECRET_BODY_LEAK internal-url=https://internal.host", {
+          status: 401,
+          statusText: "Unauthorized",
+        }),
+    );
 
     const transport = createPatchedTransport(BASE_CONFIG);
     const messages: unknown[] = [];
@@ -113,7 +121,10 @@ describe("createPatchedTransport", () => {
     const received = messages[0] as any;
     expect(received.id).toBe(5);
     expect(received.error.code).toBe(-32000);
-    expect(received.error.message).toContain("Unauthorized");
+    expect(received.error.message).toContain("401");
+    expect(received.error.message).toContain("Unauthorized"); // statusText, safe
+    expect(received.error.message).not.toContain("SECRET_BODY_LEAK");
+    expect(received.error.message).not.toContain("internal.host");
   });
 
   it("calls onerror on HTTP error when request has no id", async () => {

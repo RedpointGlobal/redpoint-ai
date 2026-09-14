@@ -13,7 +13,9 @@ import {
 const validProvider = {
   type: "anthropic" as const,
   model: "claude-opus-4-5",
-  apiKey: "sk-ant-test",
+  // apiKey must be an ${ENV_VAR} reference — literal secrets are rejected so a key
+  // can never be persisted into the workspace config (see ProviderConfigSchema).
+  apiKey: "${ANTHROPIC_API_KEY}",
 };
 
 const minimalWorkspace = {
@@ -268,6 +270,24 @@ describe("ProviderConfigSchema", () => {
       expect(result.data.baseUrl).toBe("http://localhost:11434");
       expect(result.data.apiKey).toBeUndefined();
     }
+  });
+
+  it("rejects a literal apiKey — only ${ENV_VAR} indirection is allowed", () => {
+    const result = ProviderConfigSchema.safeParse({
+      type: "anthropic",
+      model: "claude-opus-4-5",
+      apiKey: "sk-ant-literalsecret",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an ${ENV_VAR} apiKey reference", () => {
+    const result = ProviderConfigSchema.safeParse({
+      type: "anthropic",
+      model: "claude-opus-4-5",
+      apiKey: "${ANTHROPIC_API_KEY}",
+    });
+    expect(result.success).toBe(true);
   });
 });
 

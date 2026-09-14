@@ -25,6 +25,8 @@ export async function loadSkillFromFile(filePath: string): Promise<Skill> {
     tags: frontmatter.tags,
     operations: frontmatter.operations,
     dispatch: frontmatter.dispatch,
+    clientIdFoundation: frontmatter.clientIdFoundation,
+    dateGrounding: frontmatter.dateGrounding,
   };
 }
 

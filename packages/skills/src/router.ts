@@ -4,7 +4,76 @@ import type { Skill } from "./skill.js";
 import { isDispatchable, isInlinedExpert } from "./skill.js";
 import { cachingOptions } from "./caching-options.js";
 import { pruneMessageHistory } from "./message-pruner.js";
-import { GROUNDING_PREAMBLE } from "./grounding-preamble.js";
+import { GROUNDING_PREAMBLE, CLIENTID_FOUNDATION } from "./grounding-preamble.js";
+import { currentDatePreamble } from "./date-grounding.js";
+
+/**
+ * Max times a sub-agent may call the SAME tool with identical arguments within a
+ * single dispatch before the guard short-circuits. >1 so a legitimate re-check
+ * still runs; low enough that a runaway loop is cut off fast.
+ */
+const MAX_IDENTICAL_TOOL_CALLS = 2;
+
+/** Stable stringify (sorted keys) so identical args hash identically regardless
+ *  of key order; falls back to a best-effort string on any cycle/serialize error. */
+function stableArgKey(args: unknown): string {
+  try {
+    if (args && typeof args === "object" && !Array.isArray(args)) {
+      const sorted = Object.keys(args as Record<string, unknown>)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, k) => {
+          acc[k] = (args as Record<string, unknown>)[k];
+          return acc;
+        }, {});
+      return JSON.stringify(sorted);
+    }
+    return JSON.stringify(args);
+  } catch {
+    return String(args);
+  }
+}
+
+/**
+ * Robustness backstop for sub-agent tool loops. A sub-agent occasionally calls
+ * the SAME tool with identical arguments over and over (observed: get_interaction_by_id
+ * 20+ times on one id — 152K tokens, ~6 min, never finishing). Wrap each tool so
+ * that after MAX_IDENTICAL_TOOL_CALLS identical (tool + args) calls in this
+ * dispatch, further identical calls short-circuit with a stop message instead of
+ * re-executing — the earlier result already stands, so this burns no tokens/time
+ * and nudges the model to finish. Distinct calls and a legitimate re-check are
+ * unaffected. Per-dispatch state (fresh Map per invocation) → no cross-request bleed.
+ */
+export function guardRepeatedToolCalls(
+  tools: Record<string, Tool>,
+): Record<string, Tool> {
+  const counts = new Map<string, number>();
+  const guarded: Record<string, Tool> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    const execute = tool.execute;
+    if (typeof execute !== "function") {
+      guarded[name] = tool;
+      continue;
+    }
+    guarded[name] = {
+      ...tool,
+      execute: async (args: unknown, options: unknown) => {
+        const key = `${name}:${stableArgKey(args)}`;
+        const n = (counts.get(key) ?? 0) + 1;
+        counts.set(key, n);
+        if (n > MAX_IDENTICAL_TOOL_CALLS) {
+          return (
+            `Stop: you already called \`${name}\` with these exact arguments ` +
+            `${n - 1} time(s) in this task. The earlier result stands — reuse it. ` +
+            `Do not call \`${name}\` with the same arguments again; if you have ` +
+            `what you need, produce your final answer now.`
+          );
+        }
+        return (execute as (a: unknown, o: unknown) => unknown)(args, options);
+      },
+    } as Tool;
+  }
+  return guarded;
+}
 
 /**
  * Creates the `execute_skill` meta-tool that the router agent uses
@@ -76,6 +145,11 @@ export function createSkillRouterTool(
         tools = await getToolsForSkill(toolFilter);
       }
 
+      // Backstop against a sub-agent looping the same tool+args (see
+      // guardRepeatedToolCalls). Applied to whatever tool set this dispatch got
+      // (operation subset or full filter). Fresh per-dispatch state.
+      tools = guardRepeatedToolCalls(tools);
+
       // Dispatched knowledge experts (`type:"expert"` — inlined experts never
       // reach the dispatch path) get the shared, hardened grounding contract
       // prepended to their curated body: answer only from the body, refuse if
@@ -83,12 +157,28 @@ export function createSkillRouterTool(
       // rather than hand-authored per SKILL.md so every present and future
       // dispatched expert inherits ONE contract that can't drift. Action/hybrid
       // skills run on their own instructions unchanged.
-      const system =
+      // Action/hybrid skills that opt in with `clientIdFoundation: true` get the
+      // shared CLIENTID_FOUNDATION block prepended here — the SAME central-inject
+      // mechanism as the expert GROUNDING_PREAMBLE above — instead of each SKILL.md
+      // hand-copying the 3-case clientId contract into its body (which drifted
+      // across ~17 skills). Explicit opt-in, so DRH skills + rpi-clients (no flag)
+      // are untouched: one canonical copy that can't drift, zero implicit carve-outs.
+      const skillSystem =
         skill.type === "expert"
           ? `${GROUNDING_PREAMBLE}\n\n${skill.instructions}`
-          : skill.instructions;
+          : skill.clientIdFoundation
+            ? `${CLIENTID_FOUNDATION}\n\n${skill.instructions}`
+            : skill.instructions;
+      // The sub-agent that does relative-date math (e.g. rpi-interactions
+      // resolving "last 30 days") needs the current date too. Prepend it ONLY to
+      // skills that opt in via dateGrounding — blanket-injecting on every
+      // sub-agent tipped a borderline rpi-admin tool pick (list-clients
+      // regression, #27897). The orchestrator always has the date (chat.ts).
+      const system = skill.dateGrounding
+        ? `${currentDatePreamble()}\n\n${skillSystem}`
+        : skillSystem;
 
-      const { text, toolCalls, steps } = await generateText({
+      const { text, toolCalls, steps, totalUsage } = await generateText({
         model,
         system,
         prompt: input,
@@ -151,6 +241,22 @@ export function createSkillRouterTool(
         result: text,
         toolCallCount: toolCalls?.length ?? 0,
         stepCount: steps?.length ?? 0,
+        // Sub-agent's OWN token usage (generation-7 instrumentation), aggregated
+        // across this sub-agent's steps. Extracted inline (plain object) so this
+        // package keeps no dependency on @redpoint-ai/shared — the parent
+        // (chat.ts) reads this from the tool result and emits a role:"sub-agent"
+        // event sharing the parent's runId + idempotencyKey. Per-sub-agent
+        // breakdown, not a summed total, so cost-by-skill is possible.
+        usage: {
+          inputTokens: totalUsage?.inputTokens ?? 0,
+          outputTokens: totalUsage?.outputTokens ?? 0,
+          cacheReadTokens: totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0,
+          cacheWriteTokens: totalUsage?.inputTokenDetails?.cacheWriteTokens ?? 0,
+          reasoningTokens: totalUsage?.outputTokenDetails?.reasoningTokens ?? 0,
+          totalTokens:
+            totalUsage?.totalTokens ??
+            (totalUsage?.inputTokens ?? 0) + (totalUsage?.outputTokens ?? 0),
+        },
         // v1.4 minimal sub-agent telemetry. Propagates a name+args summary
         // of every sub-agent tool call up via the execute_skill return
         // shape; parent's trace event auto-serializes the field. No new

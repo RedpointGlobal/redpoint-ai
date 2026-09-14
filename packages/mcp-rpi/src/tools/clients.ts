@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { RPIApiClient } from "../client/rpi-api.js";
 import type { components } from "../client/rpi-types.js";
 import { createToolRegistrar } from "../tool-categories.js";
+import { targetUrlOf } from "./generated-shared.js";
 import { mapResultsToCards } from "./response-shapes.js";
 
 type ClusterClients = components["schemas"]["ClusterClientsJsonResponseMessage"];
@@ -94,6 +95,7 @@ export function registerClientTools(
   registerTool(
     "list_clients",
     {
+      _meta: { endpoints: ["/cluster/operations/clients"] },
       title: "List RPI Clients",
       description:
         "List all RPI clients (tenants/workspaces) visible on the cluster. Useful for discovering valid client IDs to set as RPI_DEFAULT_CLIENT_ID or to pass as the `clientId` override on other tool calls. Calls GET /cluster/operations/clients and filters client-side. Returns a card view `{id, name, description}` per item by default; pass `verbose: true` to get the full RPI response.",
@@ -121,7 +123,7 @@ export function registerClientTools(
           userToken,
           CLIENTS_PATH,
           undefined,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const items = ((all?.clients ?? []) as unknown) as Array<{
           id?: string | null;
@@ -149,6 +151,7 @@ export function registerClientTools(
   registerTool(
     "get_client_by_id",
     {
+      _meta: { endpoints: ["/cluster/operations/clients"] },
       title: "Get RPI Client by ID",
       description:
         "Find a single RPI client (tenant/workspace) by its ID. Fetches the full cluster list and matches client-side (case-insensitive exact).",
@@ -174,7 +177,7 @@ export function registerClientTools(
           userToken,
           CLIENTS_PATH,
           undefined,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const items = ((all?.clients ?? []) as unknown) as Array<{
           id?: string | null;
@@ -192,6 +195,7 @@ export function registerClientTools(
   registerTool(
     "get_client_by_name",
     {
+      _meta: { endpoints: ["/cluster/operations/clients"] },
       title: "Get RPI Client by Name",
       description:
         "Find a single RPI client (tenant/workspace) by its exact (case-insensitive) name. Fetches the full cluster list and matches client-side.",
@@ -217,7 +221,7 @@ export function registerClientTools(
           userToken,
           CLIENTS_PATH,
           undefined,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const items = ((all?.clients ?? []) as unknown) as Array<{
           id?: string | null;

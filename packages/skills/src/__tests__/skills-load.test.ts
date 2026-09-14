@@ -37,13 +37,26 @@ const EXPECTED_SKILLS = [
   "drh-runs",
   "drh-schedules",
   "rpi-admin",
+  "rpi-analysis",
+  "rpi-attributes",
   "rpi-audiences",
   "rpi-clients",
+  "rpi-cluster-infra",
+  "rpi-cluster-users",
+  "rpi-content",
+  "rpi-databases",
+  "rpi-decision-rules",
   "rpi-domain-expert",
   "rpi-folders",
   "rpi-foundation-expert",
+  "rpi-health",
+  "rpi-integrations",
   "rpi-interactions",
+  "rpi-operations",
   "rpi-selection-rules",
+  "rpi-single-customer-view",
+  "rpi-users-permissions",
+  "rpi-workflows",
 ] as const;
 
 describe("repo skills/ directory", () => {
@@ -195,5 +208,37 @@ describe("repo skills/ directory", () => {
     expect(skill!.instructions).toContain("Rule NAME ≠ rule SQL criterion");
     expect(skill!.instructions).toContain("Do NOT claim filter compliance you didn't verify");
     expect(skill!.instructions).toContain("APPLY it");
+  });
+
+  // ---- Structural guard for the v7.60 connection-check fix ----
+  //
+  // The connection-check 403 (a non-admin asking "Check my RPI connection" got
+  // routed with operation="diagnostics", which — before the fix — did NOT
+  // include verify_connection, so the sub-agent fell to the cluster error-log
+  // tool and 403'd). The fix makes verify_connection a member of EVERY rpi-admin
+  // operation: whichever operation the router LLM guesses, the low-privilege
+  // per-user connectivity tool is always in the sub-agent's toolset.
+  //
+  // That invariant was guarded ONLY by the probabilistic check-connection eval —
+  // the same green-but-wrong class of guard that hid the original 403. This is
+  // the deterministic backstop: it reads the ACTUAL shipped rpi-admin front-matter
+  // and fails loudly if verify_connection is dropped from any operation, at PR
+  // time, with no LLM in the loop.
+  it("rpi-admin: verify_connection is in EVERY operation (v7.60 connection-fix invariant)", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const admin = skills.find((s) => s.name === "rpi-admin");
+    expect(admin).toBeDefined();
+    // Must actually declare operations — an empty/absent map would let the
+    // per-operation assertion below pass vacuously.
+    expect(admin!.operations).toBeDefined();
+    const ops = Object.entries(admin!.operations!);
+    expect(ops.length).toBeGreaterThan(0);
+    // Every operation — identity, auth, diagnostics, and any future one — must
+    // list verify_connection. A missing member here reintroduces the 403.
+    for (const [name, tools] of ops) {
+      expect(tools, `operation "${name}" must include verify_connection`).toContain(
+        "verify_connection",
+      );
+    }
   });
 });

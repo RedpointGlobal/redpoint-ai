@@ -40,7 +40,14 @@ afterAll(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-/** Mirrors store/schema.ts (workspaces + threads) for the columns seeding uses. */
+/**
+ * Mirrors the FULL current store/schema.ts table set. It must stay complete: the
+ * seed's schema bootstrap probes EVERY expected table and runs an additive
+ * drizzle-kit push if any is missing (the self-heal for volumes upgraded from an
+ * older build). A fixture missing a table would make every boot here trigger that
+ * (slow) push — so a new table in schema.ts must be mirrored here too. The
+ * partial-schema self-heal itself is covered by the dedicated test below.
+ */
 function makeDb(path: string, mode: "empty" | "legacy"): void {
   const db = new Database(path, { create: true });
   db.run(`CREATE TABLE workspaces (
@@ -50,6 +57,21 @@ function makeDb(path: string, mode: "empty" | "legacy"): void {
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     title TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`);
+  db.run(`CREATE TABLE conversation_clients (
+    id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, user_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL, client_id TEXT NOT NULL, client_name TEXT,
+    updated_at INTEGER NOT NULL)`);
+  db.run(`CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    role TEXT NOT NULL, content TEXT NOT NULL, tool_calls TEXT, tool_results TEXT,
+    created_at INTEGER NOT NULL)`);
+  db.run(`CREATE TABLE runs (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending', error TEXT,
+    prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER,
+    created_at INTEGER NOT NULL, finished_at INTEGER)`);
   db.run(`CREATE TABLE api_keys (
     id TEXT PRIMARY KEY, workspace_id TEXT REFERENCES workspaces(id))`);
   db.run(`CREATE TABLE audit_logs (
@@ -381,18 +403,8 @@ describe("seed — product workspace identity + legacy rename", () => {
     // no surviving workspace to move onto lost its conversations permanently —
     // not an orphan row, silent data loss.
     const path = join(workDir, "no-survivor.db");
-    const db = new Database(path, { create: true });
-    db.run(`CREATE TABLE workspaces (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
-      config TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`);
-    db.run(`CREATE TABLE threads (
-      id TEXT PRIMARY KEY,
-      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-      title TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`);
-    db.run(`CREATE TABLE api_keys (
-      id TEXT PRIMARY KEY, workspace_id TEXT REFERENCES workspaces(id))`);
-    db.run(`CREATE TABLE audit_logs (
-      id TEXT PRIMARY KEY, workspace_id TEXT REFERENCES workspaces(id))`);
+    makeDb(path, "empty"); // full current schema — avoids a spurious self-heal push
+    const db = new Database(path);
     db.run("PRAGMA foreign_keys = ON");
     const now = Date.now();
     // An unexpected workspace holding conversations, and NO seeded product row
@@ -435,4 +447,42 @@ describe("seed — product workspace identity + legacy rename", () => {
     expect(rows).toHaveLength(2);
     expectCanonicalPair(rows);
   });
+
+  // The self-heal for a volume upgraded from an older build: the DB has the old
+  // tables + real data, but lacks a table added since. Boot must ADD the missing
+  // table (additive drizzle-kit push) WITHOUT dropping the existing data. The
+  // existing tables must be drizzle-authored (as on a real volume), so the schema
+  // is built by a first real boot rather than by hand — hand-written DDL that
+  // doesn't byte-match schema.ts would make push try to reconcile it. Longer
+  // timeout: this is the one path that legitimately runs push (twice here).
+  it("self-heals a schema missing a newer table, preserving existing data", () => {
+    const path = join(workDir, "upgrade.db");
+    boot(path); // first boot builds the full schema the production way + seeds
+
+    // Plant rep data (a conversation) under a seeded workspace, then simulate the
+    // pre-upgrade volume by removing the newer table.
+    const setup = new Database(path);
+    const ws = setup.query("SELECT id FROM workspaces LIMIT 1").get() as { id: string };
+    const now = Date.now();
+    setup.run(
+      "INSERT INTO threads (id,workspace_id,title,created_at,updated_at) VALUES (?,?,?,?,?)",
+      ["witness-thread", ws.id, "rep conversation that must survive upgrade", now, now],
+    );
+    setup.run("DROP TABLE conversation_clients");
+    setup.close();
+
+    boot(path); // second boot: schemaIsComplete() sees the gap → additive push
+
+    const check = new Database(path);
+    const healed = check
+      .query("SELECT count(*) c FROM sqlite_master WHERE type='table' AND name='conversation_clients'")
+      .get() as { c: number };
+    const thread = check
+      .query("SELECT id FROM threads WHERE id = ?")
+      .get("witness-thread") as { id: string } | null;
+    check.close();
+
+    expect(healed.c).toBe(1); // missing table created
+    expect(thread).not.toBeNull(); // pre-existing conversation survived the heal
+  }, 30_000);
 });

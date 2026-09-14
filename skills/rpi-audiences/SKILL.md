@@ -1,8 +1,9 @@
 ---
 name: rpi-audiences
 title: RPI Audiences
-description: Operational playbook for the RPI MCP server's audience tools — list/get/metadata, audience definitions, and the test-workflow lifecycle (activate → poll status → fetch results).
+description: Operational playbook for the RPI MCP server's audience tools — list/get/metadata, audience definitions, the test-workflow lifecycle (activate → poll status → fetch results), audience snapshots (point-in-time frozen membership) with their refresh-run status, and cell lists (audience-by-offer contact-planning matrices).
 type: action
+clientIdFoundation: true
 mcpToolFilter:
   - list_audiences
   - get_audience_by_id
@@ -17,12 +18,19 @@ mcpToolFilter:
   - get_audience_workflow_results
   - list_audience_test_instances
   - get_audience_execution_results
+  - list_audience_snapshots
+  - get_audience_snapshot
+  - get_audience_snapshot_by_name
+  - get_audience_snapshot_workflows_status
+  - get_cell_list
 operations:
   list: [list_audiences]
   get: [list_audiences, get_audience_by_id, get_audience_by_name]
   metadata: [list_audiences, get_audience_metadata]
   definitions: [list_audiences, list_audience_definitions, get_audience_definition_by_id, get_audience_definition_by_name]
   workflow: [list_audiences, run_audience_test_workflow, get_audience_workflow_activity_status, get_audience_workflow_block_results, get_audience_workflow_results, list_audience_test_instances, get_audience_execution_results]
+  snapshots: [list_audience_snapshots, get_audience_snapshot, get_audience_snapshot_by_name, get_audience_snapshot_workflows_status]
+  cell-list: [get_cell_list]
 maxSteps: 15
 tags: [rpi, audiences, workflows]
 ---
@@ -35,14 +43,6 @@ Tools for working with **audience files** (the actual segmented record sets) and
 - **Audience Definition** = a template that defines the data structure / fields an audience uses. Identified by a definition `id` or `name`. Required when creating new audiences.
 
 Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the folder-listing capability before any create call, show names not IDs.
-
-**`clientId` handling.** Three cases:
-
-1. **No `clientId` provided** (most common — generic requests like "list my audiences") — OMIT the `clientId` argument entirely. The MCP server applies `RPI_DEFAULT_CLIENT_ID` from environment automatically. Do NOT ask the user for a clientId; do NOT refuse to proceed.
-
-2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890`) — pass it through unchanged.
-
-3. **`clientId` provided as a non-UUID** (almost certainly a tenant *name* the parent agent forgot to resolve) — your sub-agent's tool filter does NOT include name-resolution. Stop and respond with a clear error asking the parent to redispatch via the **rpi-clients** skill to resolve the name to a UUID. Forwarding a name will fail with a 401 / "Client ID '00000000-0000-0000-0000-000000000000' not found" because RPI parses non-UUID input to the empty UUID.
 
 ## Tool inventory
 
@@ -66,6 +66,16 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 ### Test instance history & results
 - `list_audience_test_instances` — historical test runs for an audience.
 - `get_audience_execution_results` — execution results for a specific run.
+
+### Snapshots (point-in-time frozen membership)
+An **audience snapshot** is a frozen point-in-time capture of an audience's membership — a third distinct concept alongside the live audience file and the audience definition (structure). Operation `snapshots`.
+- `list_audience_snapshots` — all snapshots in the tenant (id + name).
+- `get_audience_snapshot` — one snapshot by `id`.
+- `get_audience_snapshot_by_name` — one snapshot by exact name.
+- `get_audience_snapshot_workflows_status` — status of the snapshot *refresh runs* (pending / running / complete). This is about the RUNS that produce snapshots; the snapshot objects themselves are the three tools above.
+
+### Cell lists (contact-planning matrices)
+- `get_cell_list` — one cell list by `id`: the matrix of cells (audience × offer/treatment combinations) used in campaign contact planning. Operation `cell-list`.
 
 ## Common workflows
 
@@ -116,8 +126,11 @@ Users (and the LLM) often conflate these:
 - "What audiences are there?" → `list_audiences` (files).
 - "What audience definitions are there?" → `list_audience_definitions` (templates).
 - "How is the audience set up?" / "What fields does it have?" → `get_audience_metadata` on the audience file, OR `get_audience_definition_by_id` on its underlying template.
+- "What audience snapshots are there?" / "show me the snapshot named X" → `list_audience_snapshots` / `get_audience_snapshot_by_name` (the frozen point-in-time membership captures — NOT the live file, NOT the definition).
 
 When the user says "audience X uses what schema?" — get the audience first (`get_audience_by_id`), find the definition reference, then `get_audience_definition_by_id`.
+
+Three concepts, kept straight: the **live audience file** (`list_audiences`), its **definition/template** (`list_audience_definitions`), and a **snapshot** (`list_audience_snapshots`, a frozen membership at a moment in time).
 
 ## `verbose` and pagination defaults
 
