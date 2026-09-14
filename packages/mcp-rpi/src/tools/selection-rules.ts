@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { RPIApiClient } from "../client/rpi-api.js";
 import type { components } from "../client/rpi-types.js";
 import { createToolRegistrar } from "../tool-categories.js";
+import { targetUrlOf } from "./generated-shared.js";
 import { searchFileInfos, enrichMatchesWithFullPath } from "../client/search.js";
 import { pollUntilTerminal } from "../client/polling.js";
 import {
@@ -108,6 +109,7 @@ export function registerSelectionRuleTools(
   registerTool(
     "list_selection_rules",
     {
+      _meta: { endpoints: ["/client/file-system/search-file-infos"] },
       title: "List Selection Rules",
       description:
         "Search selection rules (both Basic and Standard subtypes) in the RPI instance. Uses POST /client/file-system/search-file-infos with fileTypeFilters=[\"Selection Rule\"]. Returns a card view `{id, name, description, parentFolderName, subTypeName}` per item by default — subTypeName lets you route to get_basic_selection_rule_by_id vs get_standard_selection_rule_by_id. Pass `verbose: true` to get the full RPI response.",
@@ -150,7 +152,7 @@ export function registerSelectionRuleTools(
             pageSize,
             folderId,
           },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const shaped = verbose
           ? raw
@@ -168,6 +170,7 @@ export function registerSelectionRuleTools(
   registerTool(
     "get_selection_rule_by_name",
     {
+      _meta: { endpoints: ["/client/file-system/search-file-infos"] },
       title: "Get Selection Rule by Name",
       description:
         "Find selection rules by exact (case-insensitive) name. Uses POST /client/file-system/search-file-infos. Returns `{found: false, name}` when no match, or `{found: true, matches: [...]}` when 1+ — `matches` is always an array (length 1 is common; 2+ means the same name exists in multiple folders, surface `fullPath` (the full folder path, resolved per match) and ask the user to pick). Each match carries `fullPath`, `parentFolderName`, and `subTypeName` so you can chain to get_basic_selection_rule_by_id or get_standard_selection_rule_by_id with `matches[i].id`.",
@@ -204,7 +207,7 @@ export function registerSelectionRuleTools(
             pageSize: 255,
             folderId,
           },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const matches = filterByNameExact(search?.results ?? [], name);
         if (matches.length === 0) {
@@ -214,7 +217,7 @@ export function registerSelectionRuleTools(
           rpiClient,
           userToken,
           matches,
-          { clientId, verbose: true },
+          { clientId, verbose: true, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent({ found: true, matches: enriched });
       } catch (error) {
@@ -226,6 +229,7 @@ export function registerSelectionRuleTools(
   registerTool(
     "get_basic_selection_rule_by_id",
     {
+      _meta: { endpoints: ["/client/files/document-database-decision"] },
       title: "Get Basic Selection Rule by ID",
       description:
         "Fetch a Basic selection rule's full detail by its RPI ID via GET /client/files/document-database-decision. In RPI, Basic selection rules are represented as document-database-decisions.",
@@ -251,7 +255,7 @@ export function registerSelectionRuleTools(
           userToken,
           "/client/files/document-database-decision",
           { ID: selectionRuleId },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent(result);
       } catch (error) {
@@ -266,6 +270,7 @@ export function registerSelectionRuleTools(
   registerTool(
     "get_standard_selection_rule_by_id",
     {
+      _meta: { endpoints: ["/client/files/standard-selection-rule"] },
       title: "Get Standard Selection Rule by ID",
       description:
         "Fetch a Standard selection rule's full detail by its RPI ID via GET /client/files/standard-selection-rule.",
@@ -291,7 +296,7 @@ export function registerSelectionRuleTools(
           userToken,
           "/client/files/standard-selection-rule",
           { ID: selectionRuleId },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent(result);
       } catch (error) {
@@ -326,13 +331,14 @@ export function registerSelectionRuleTools(
     timeoutSeconds: number,
     clientId: string | undefined,
     verbose: boolean,
+    baseUrl: string | undefined,
   ): Promise<{ jobId: number; status: ClientJobSummary; results: TResults }> {
     // 1. Kick off the job — RPI returns a ClientJobSummary with the assigned jobID.
     const startResp = await rpiClient.post<ClientJobSummary>(
       userToken,
       startPath,
       { id: selectionRuleId },
-      { clientId, verbose: true },
+      { clientId, verbose: true, baseUrl },
     );
     const jobId = startResp.jobID;
     if (jobId === undefined || jobId === null) {
@@ -348,7 +354,7 @@ export function registerSelectionRuleTools(
           userToken,
           "/client/jobs/job/status",
           { ID: String(jobId) },
-          { clientId, verbose: true },
+          { clientId, verbose: true, baseUrl },
         ),
       {
         intervalMs: 1000,
@@ -374,7 +380,7 @@ export function registerSelectionRuleTools(
       userToken,
       resultsPath,
       { ID: String(jobId), PageNumber: "1" },
-      { clientId, verbose },
+      { clientId, verbose, baseUrl },
     );
 
     return { jobId, status: finalStatus, results };
@@ -383,6 +389,7 @@ export function registerSelectionRuleTools(
   registerTool(
     "run_selection_rule_count",
     {
+      _meta: { endpoints: ["/client/jobs/start/selection-rule-count"] },
       title: "Run Selection Rule Count",
       description:
         "Start a selection-rule count job, poll until complete, and return the count. Works for both Basic and Standard selection rules (the count job takes a rule ID regardless of subtype). Combines POST /client/jobs/start/selection-rule-count → poll GET /client/jobs/job/status → GET /client/jobs/results/selection-rule-count-results. Returns `{jobId, status, results}`. Fails with a timeout error if the job does not finish within `timeoutSeconds` (default 300s).",
@@ -418,6 +425,7 @@ export function registerSelectionRuleTools(
           timeoutSeconds,
           clientId,
           verbose,
+          targetUrlOf(extra),
         );
         return jsonContent(out);
       } catch (error) {
@@ -429,6 +437,7 @@ export function registerSelectionRuleTools(
   registerTool(
     "run_selection_rule_waterfall",
     {
+      _meta: { endpoints: ["/client/jobs/start/selection-rule-waterfall"] },
       title: "Run Selection Rule Waterfall",
       description:
         "Start a selection-rule waterfall job (step-by-step count breakdown), poll until complete, and return the results. Same lifecycle as run_selection_rule_count but against POST /client/jobs/start/selection-rule-waterfall. Works for both Basic and Standard selection rules. Returns `{jobId, status, results}`.",
@@ -459,6 +468,7 @@ export function registerSelectionRuleTools(
           timeoutSeconds,
           clientId,
           verbose,
+          targetUrlOf(extra),
         );
         return jsonContent(out);
       } catch (error) {
@@ -470,6 +480,7 @@ export function registerSelectionRuleTools(
   registerTool(
     "get_selection_rule_sql_count_query",
     {
+      _meta: { endpoints: ["/client/files/standard-selection-rule/sqlCountQuery"] },
       title: "Get Selection Rule SQL Count Query",
       description:
         "Fetch the generated SQL COUNT(*) query that RPI would execute for a Standard selection rule, without running a job. GET /client/files/standard-selection-rule/sqlCountQuery. Use this to preview the SQL or debug query generation.",
@@ -495,7 +506,7 @@ export function registerSelectionRuleTools(
           userToken,
           "/client/files/standard-selection-rule/sqlCountQuery",
           { ID: selectionRuleId },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent(result);
       } catch (error) {
@@ -510,6 +521,7 @@ export function registerSelectionRuleTools(
   registerTool(
     "list_basic_selection_rule_document_definitions",
     {
+      _meta: { endpoints: ["/client/files/document-database-decision/document-definitions"] },
       title: "List Basic Selection Rule Document Definitions",
       description:
         "List the document definitions available for Basic selection rules (document-database-decisions) in the current tenant. The RPI endpoint takes no query params — returns all available definitions; this tool applies client-side name filtering and pagination. Returns a card view `{id, name, description}` per item by default; pass `verbose: true` to get the full RPI response.",
@@ -537,7 +549,7 @@ export function registerSelectionRuleTools(
           userToken,
           "/client/files/document-database-decision/document-definitions",
           undefined,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         // RPI returns { definitions: [...] } from this endpoint (verified
         // against the live instance); fall back to other envelope keys

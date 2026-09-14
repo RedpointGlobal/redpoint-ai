@@ -202,6 +202,48 @@ describe("RPIAuthService", () => {
       // First call is to validate-token-status, second should be cached
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
+
+    // #28066 fix — the validate-token-status fetch is now bounded (AbortSignal.timeout)
+    // so it can't hang unbounded; a timeout/network error is a CLEAN failure, not a hang.
+    it("bounded: passes an AbortSignal to the fetch (so it can't hang unbounded)", async () => {
+      let sawSignal = false;
+      mockFetch((_url, init) => {
+        sawSignal = init?.signal instanceof AbortSignal;
+        return jsonResponse({ status: "valid" });
+      });
+      const auth = new RPIAuthService(
+        "https://rpi.example.com",
+        "client-id",
+        "client-secret",
+        "user",
+        "pass",
+      );
+      const result = await auth.validateToken("tok");
+      expect(result).toBe(true);
+      expect(sawSignal).toBe(true);
+    });
+
+    it("bounded: fetch rejection (timeout/abort) → clean false, NOT a throw, NOT cached", async () => {
+      let calls = 0;
+      mockFetch(() => {
+        calls++;
+        return Promise.reject(
+          Object.assign(new Error("The operation timed out."), { name: "TimeoutError" }),
+        );
+      });
+      const auth = new RPIAuthService(
+        "https://rpi.example.com",
+        "client-id",
+        "client-secret",
+        "user",
+        "pass",
+      );
+      // Does not throw — resolves to a clean false.
+      await expect(auth.validateToken("tok")).resolves.toBe(false);
+      // NOT cached: a transient stall must not lock the token out for the TTL — retries.
+      await auth.validateToken("tok");
+      expect(calls).toBe(2);
+    });
   });
 
   describe("loginUser", () => {

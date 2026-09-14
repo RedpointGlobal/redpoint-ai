@@ -1,8 +1,9 @@
 ---
 name: rpi-selection-rules
 title: RPI Selection Rules
-description: Selection rules (also called a segment or segmentation criterion) — the audience-building blocks underneath audiences. OWNS audience counts and segment counts — handles "how many records in this audience", "audiences with counts > 0", "list segments with counts > N", "run a count for rule X". Also covers "show me my selection rules / segments", "what does the SQL look like?", Basic vs Standard subtype routing, and waterfall analysis.
+description: Selection rules (also called a segment or segmentation criterion) — the audience-building blocks underneath audiences. OWNS audience counts and segment counts — handles "how many records in this audience", "audiences with counts > 0", "list segments with counts > N", "run a count for rule X". Also covers "show me my selection rules / segments", "what does the SQL look like?", Basic vs Standard subtype routing, waterfall analysis, and the Basic and Standard rule-building catalogs (document definitions and entire-rule types).
 type: action
+clientIdFoundation: true
 mcpToolFilter:
   - list_selection_rules
   - get_selection_rule_by_name
@@ -12,13 +13,14 @@ mcpToolFilter:
   - run_selection_rule_waterfall
   - get_selection_rule_sql_count_query
   - list_basic_selection_rule_document_definitions
+  - list_standard_selection_rule_entire_rule_types
 operations:
   list: [list_selection_rules]
   get: [list_selection_rules, get_selection_rule_by_name, get_basic_selection_rule_by_id, get_standard_selection_rule_by_id]
   count: [list_selection_rules, run_selection_rule_count]
   waterfall: [list_selection_rules, run_selection_rule_waterfall]
   sql: [list_selection_rules, get_selection_rule_sql_count_query, get_basic_selection_rule_by_id, get_standard_selection_rule_by_id]
-  definitions: [list_selection_rules, list_basic_selection_rule_document_definitions]
+  definitions: [list_selection_rules, list_basic_selection_rule_document_definitions, list_standard_selection_rule_entire_rule_types]
 maxSteps: 10
 tags: [rpi, selection-rules, segments]
 ---
@@ -35,14 +37,6 @@ RPI has two subtypes that LOOK identical in a list but require different fetch e
 The cardinal rule: **always read `subTypeName` from the list result and route to the correct `get_*` tool.** Calling the wrong one gives a 404.
 
 Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the folder-listing capability before any create call, show names not IDs.
-
-**`clientId` handling.** Three cases:
-
-1. **No `clientId` provided** (most common — generic requests like "list my selection rules") — OMIT the `clientId` argument entirely. The MCP server applies `RPI_DEFAULT_CLIENT_ID` from environment automatically. Do NOT ask the user for a clientId; do NOT refuse to proceed.
-
-2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890`) — pass it through unchanged.
-
-3. **`clientId` provided as a non-UUID** (almost certainly a tenant *name* the parent agent forgot to resolve) — your sub-agent's tool filter does NOT include name-resolution. Stop and respond with a clear error asking the parent to redispatch via the **rpi-clients** skill to resolve the name to a UUID. Forwarding a name will fail with a 401 / "Client ID '00000000-0000-0000-0000-000000000000' not found" because RPI parses non-UUID input to the empty UUID.
 
 ## Tool inventory
 
@@ -61,8 +55,9 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 ### SQL inspection (Standard only)
 - `get_selection_rule_sql_count_query` — fetch the generated SQL `COUNT(*)` query for a Standard rule. No job execution. Use this to preview or debug query generation.
 
-### Basic rule schemas
-- `list_basic_selection_rule_document_definitions` — list document definitions available for Basic rules in this tenant.
+### Rule-building schemas & catalogs (operation `definitions`)
+- `list_basic_selection_rule_document_definitions` — document definitions available for **Basic** rules in this tenant.
+- `list_standard_selection_rule_entire_rule_types` — the advance "entire rule" types (and their ids) available when building a **Standard** rule (a catalog, no id). The Standard analog of the Basic document-definitions list above; for one specific Standard rule use `get_standard_selection_rule_by_id`.
 
 ## Common workflows
 

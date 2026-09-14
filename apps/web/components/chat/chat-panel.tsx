@@ -9,6 +9,7 @@ import {
   MessagePartPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  makeAssistantToolUI,
   useMessagePartText,
 } from "@assistant-ui/react";
 import {
@@ -21,6 +22,10 @@ import { Button } from "@/components/ui/button";
 import { Markdown } from "@/components/chat/markdown";
 import { cn } from "@/lib/utils";
 import { getChatUrl } from "@/lib/api";
+import { RenderChartToolUI } from "@/components/chat/agent-chart";
+import { RenderStatsToolUI } from "@/components/chat/agent-stats";
+import { RenderDashboardToolUI } from "@/components/chat/agent-dashboard";
+import { AgentToolSkeleton } from "@/components/chat/agent-tool-skeleton";
 
 const DEFAULT_SUGGESTIONS = [
   "Check my RPI connection",
@@ -28,6 +33,7 @@ const DEFAULT_SUGGESTIONS = [
   "List my selection rules",
   "List my audiences",
   "List my interactions",
+  "Run daily interaction dashboard for last month...",
   "List my folders",
 ];
 
@@ -100,6 +106,16 @@ export function ChatPanel({ workspaceId, suggestions }: ChatPanelProps) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      {/* #27897 / #27957 — register the render_chart / render_stats /
+          render_view_dashboard tool-UIs so those tool calls render inline as
+          <AgentChart> / <StatTiles> / <AgentDashboard>. Chart + stats render from
+          their args; the dashboard renders from the RESULT (server-assembled spec).
+          These render nothing themselves. */}
+      <RenderChartToolUI />
+      <RenderStatsToolUI />
+      <RenderDashboardToolUI />
+      {/* Running-state placeholder for dispatched skills. */}
+      <ExecuteSkillToolUI />
       {/* ThreadPrimitive.Root manages scroll position and running state */}
       <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col bg-background">
         <ThreadPrimitive.Viewport className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -178,7 +194,8 @@ function EmptyHero({ suggestions }: { suggestions: string[] }) {
 
 // Persistent suggestion chips, rendered above the composer and ALWAYS available
 // (not just on the empty/welcome state) so they can be clicked throughout a
-// session. ThreadPrimitive.Suggestion sets the composer text and submits on click.
+// session. ThreadPrimitive.Suggestion POPULATES the composer text on click (it
+// does not auto-send) — the user reviews/edits, then submits.
 function SuggestionBar({ suggestions }: { suggestions: string[] }) {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-wrap gap-2 px-4 pb-2">
@@ -290,6 +307,37 @@ function ToolFallback({
     </details>
   );
 }
+
+// While a dispatched skill (execute_skill) is RUNNING, show a friendly working
+// state instead of the bare collapsed chip. A per-day runs dashboard grinds the
+// workflow-instances endpoint for ~2min (#27897), so a runs/daily dispatch gets a
+// "building your dashboard…" placeholder; other skills get a generic "Working…".
+// On complete we defer to the same collapsible ToolFallback so nothing regresses.
+function executeSkillLabel(args: { skillName?: string; input?: string } | undefined): string {
+  const skill = (args?.skillName ?? "").toLowerCase();
+  const input = (args?.input ?? "").toLowerCase();
+  const isRunsSkill = skill.includes("interaction");
+  if (isRunsSkill && /\bdaily\b|per.?day|day.by.day|time.?series|trend/.test(input)) {
+    return "Building your dashboard… (this can take about a minute)";
+  }
+  if (isRunsSkill && /dashboard|report|\bruns\b/.test(input)) {
+    return "Building your dashboard…";
+  }
+  return "Working…";
+}
+
+const ExecuteSkillToolUI = makeAssistantToolUI<
+  { skillName?: string; input?: string; operation?: string },
+  unknown
+>({
+  toolName: "execute_skill",
+  render: ({ args, result, status }) =>
+    status?.type === "complete" ? (
+      <ToolFallback toolName="execute_skill" args={args} result={result} />
+    ) : (
+      <AgentToolSkeleton label={executeSkillLabel(args)} />
+    ),
+});
 
 // The input row — composer textarea + send/stop button. Rendered both in the
 // welcome hero and in the docked bottom bar; each caller wraps it in its own

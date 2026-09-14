@@ -19,7 +19,7 @@ Every RPI call is scoped to a single tenant via the `X-ClientID` HTTP header. Th
 
 **Rules:**
 - If the user has not specified a tenant, use the default — don't pass `clientId`.
-- If the user says "switch to client X" or "use tenant Y," use the client-discovery capability the MCP server exposes to find the matching `id`, then pass that `id` as `clientId` on subsequent calls.
+- If the user says "switch to client X" or "use tenant Y," call the `set_active_tenant` tool with the name (or id) as the user expressed it — it resolves the name against the tenants the user can access and switches this conversation's active tenant. After a switch, subsequent RPI operations target that tenant AUTOMATICALLY — do NOT pass the tenant name or a `clientId` into any further call. To list the accessible tenants, use the rpi-admin skill's user-client listing.
 - Never invent a `clientId`. An empty string is treated as "use the default."
 - Prefer name-based lookup over ID lookup unless the user has supplied an exact ID.
 - **`clientId` is always a UUID — never a Client name.** If you only have the name, resolve it to a UUID via the rpi-clients skill before any other call. Passing a name where a UUID is expected will fail.

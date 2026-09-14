@@ -55,8 +55,9 @@ if (shouldSkip) {
 
 describe.skipIf(shouldSkip)("Folders tool chain (live)", () => {
   let apiClient: RPIApiClient;
+  let proxyToken: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const authService = new RPIAuthService(
       process.env.RPI_INTEGRATION_API_URL!,
       process.env.RPI_OAUTH_CLIENT_ID!,
@@ -69,6 +70,7 @@ describe.skipIf(shouldSkip)("Folders tool chain (live)", () => {
       authService,
       process.env.RPI_DEFAULT_CLIENT_ID!,
     );
+    proxyToken = await authService.getProxyToken();
   });
 
   it(
@@ -76,7 +78,7 @@ describe.skipIf(shouldSkip)("Folders tool chain (live)", () => {
     { timeout: 30_000 },
     async () => {
       const root = await apiClient.get<FolderItems>(
-        undefined,
+        proxyToken,
         "/client/file-system/folders/root-folders",
         undefined,
         { verbose: true },
@@ -100,7 +102,7 @@ describe.skipIf(shouldSkip)("Folders tool chain (live)", () => {
 
       // Pull subfolders for the first root folder. May legitimately be empty.
       const sub = await apiClient.get<FolderItems>(
-        undefined,
+        proxyToken,
         "/client/file-system/folders/subfolders",
         { ID: first.id! },
         { verbose: true },

@@ -12,6 +12,11 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { sql } from "drizzle-orm";
 import * as schema from "../store/schema.js";
 import { randomUUID } from "crypto";
+import {
+  configureInstrumentation,
+  type InstrumentationEvent,
+  type InstrumentationSink,
+} from "@redpoint-ai/shared";
 
 // ---------------------------------------------------------------------------
 // In-memory database — same pattern as workspaces.test.ts
@@ -107,6 +112,7 @@ mock.module("@redpoint-ai/skills", () => ({
   loadSkillsFromDirectory: () => Promise.resolve([]),
   createSkillRouterTool: () => ({}),
   buildRouterSystemPrompt: (base: string, _catalog: string) => base,
+  currentDatePreamble: (now: Date = new Date()) => `Current date: ${now.toISOString()} (UTC).`,
   // Faithful to the real predicate so server imports resolve.
   isDispatchable: (s: { type: string; dispatch?: boolean }) =>
     s.type !== "expert" || s.dispatch === true,
@@ -287,5 +293,135 @@ describe("POST /api/v1/workspaces/:workspaceId/chat", () => {
     // The mock returns a 200 JSON response
     expect(res.status).toBe(200);
     expect(mockCreateAgentUIStreamResponse).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression: the parent turn's usage is populated only in onStepFinish, NOT in
+  // createAgentUIStreamResponse's onFinish event (which carries no usage). This
+  // codifies the side-effects that were silently dead — a runs row AND a parent
+  // instrumentation event must fire from the accumulated per-step usage.
+  it("writes a runs row and emits a parent instrumentation event from accumulated per-step usage", async () => {
+    const wsId = randomUUID();
+    await insertWorkspace(wsId);
+
+    class RecordingSink implements InstrumentationSink {
+      events: InstrumentationEvent[] = [];
+      write(e: InstrumentationEvent) {
+        this.events.push(e);
+      }
+    }
+    const sink = new RecordingSink();
+    configureInstrumentation(sink);
+    const savedEnvId = process.env.INSTRUMENTATION_USER_ID;
+    process.env.INSTRUMENTATION_USER_ID = "regression-tester";
+
+    // Drive the stream: one usage-bearing step, then finish (onFinish has no usage).
+    mockCreateAgentUIStreamResponse.mockImplementationOnce(async (opts: any) => {
+      opts.onStepFinish({
+        text: "hi",
+        toolCalls: [],
+        // One execute_skill result carrying the sub-agent's own usage (as
+        // router.ts returns it) → should emit a role:"sub-agent" event.
+        toolResults: [
+          {
+            toolName: "execute_skill",
+            output: {
+              skillName: "rpi-audiences",
+              usage: {
+                inputTokens: 200,
+                outputTokens: 50,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                reasoningTokens: 0,
+                totalTokens: 250,
+              },
+            },
+          },
+        ],
+        usage: {
+          inputTokens: 100,
+          outputTokens: 40,
+          totalTokens: 140,
+          inputTokenDetails: { cacheReadTokens: 10, cacheWriteTokens: 5 },
+          outputTokenDetails: { reasoningTokens: 12 },
+        },
+      });
+      await opts.onFinish({});
+      return new Response("ok");
+    });
+
+    try {
+      const res = await app.request(url(`/api/v1/workspaces/${wsId}/chat`), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": "idem-regression-1",
+        },
+        body: JSON.stringify({
+          messages: [
+            { id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+          ],
+        }),
+      });
+      expect(res.status).toBe(200);
+
+      // (a) runs row written from the accumulated usage (was silently skipped before)
+      const rows = sqlite
+        .query(
+          "SELECT prompt_tokens, completion_tokens, total_tokens, status FROM runs",
+        )
+        .all() as Array<{
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+        status: string;
+      }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].prompt_tokens).toBe(100);
+      expect(rows[0].completion_tokens).toBe(40);
+      expect(rows[0].total_tokens).toBe(140);
+      expect(rows[0].status).toBe("completed");
+
+      // (b) one parent event + one sub-agent event, sharing the correlation id
+      expect(sink.events).toHaveLength(2);
+      const parent = sink.events.find((e) => e.role === "parent")!;
+      const sub = sink.events.find((e) => e.role === "sub-agent")!;
+      expect(parent).toBeDefined();
+      expect(sub).toBeDefined();
+
+      // Parent — its OWN accumulated usage (100/40/140), no skillName
+      expect(parent.clientId).toBe("web");
+      expect(parent.userId).toBe("regression-tester");
+      expect(parent.idempotencyKey).toBe("idem-regression-1");
+      expect(parent.workspaceId).toBe(wsId);
+      expect(parent.provider).toBe("openai");
+      expect(parent.model).toBe("gpt-4o");
+      expect(parent.inputTokens).toBe(100);
+      expect(parent.outputTokens).toBe(40);
+      expect(parent.cacheReadTokens).toBe(10);
+      expect(parent.cacheWriteTokens).toBe(5);
+      expect(parent.reasoningTokens).toBe(12);
+      expect(parent.totalTokens).toBe(140);
+      expect(parent.skillName).toBeUndefined();
+      expect(typeof parent.eventId).toBe("string");
+      expect(parent.eventId.length).toBeGreaterThan(0);
+
+      // Sub-agent — the skill's OWN usage (200/50/250) + skillName, NOT summed
+      expect(sub.skillName).toBe("rpi-audiences");
+      expect(sub.inputTokens).toBe(200);
+      expect(sub.outputTokens).toBe(50);
+      expect(sub.totalTokens).toBe(250);
+      expect(sub.clientId).toBe("web");
+
+      // Correlation — critical for the Step-6 dedup grain: SAME runId + idempotencyKey
+      expect(sub.runId).toBe(parent.runId);
+      expect(sub.idempotencyKey).toBe(parent.idempotencyKey);
+      expect(sub.userId).toBe(parent.userId);
+      // Distinct event ids
+      expect(sub.eventId).not.toBe(parent.eventId);
+    } finally {
+      configureInstrumentation(null);
+      if (savedEnvId === undefined) delete process.env.INSTRUMENTATION_USER_ID;
+      else process.env.INSTRUMENTATION_USER_ID = savedEnvId;
+    }
   });
 });

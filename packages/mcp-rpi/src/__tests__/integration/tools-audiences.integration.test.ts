@@ -67,8 +67,9 @@ if (shouldSkip) {
 
 describe.skipIf(shouldSkip)("Audiences tool chain (live)", () => {
   let apiClient: RPIApiClient;
+  let proxyToken: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const authService = new RPIAuthService(
       process.env.RPI_INTEGRATION_API_URL!,
       process.env.RPI_OAUTH_CLIENT_ID!,
@@ -81,6 +82,7 @@ describe.skipIf(shouldSkip)("Audiences tool chain (live)", () => {
       authService,
       process.env.RPI_DEFAULT_CLIENT_ID!,
     );
+    proxyToken = await authService.getProxyToken();
   });
 
   // -------------------------------------------------------------------------
@@ -90,7 +92,7 @@ describe.skipIf(shouldSkip)("Audiences tool chain (live)", () => {
     // 1. List
     const listResult = await searchFileInfos<{
       results?: Array<{ id?: string | null; name?: string | null }>;
-    }>(apiClient, undefined, {
+    }>(apiClient, proxyToken, {
       fileTypes: ["Audience"],
       pageSize: 5,
     });
@@ -119,7 +121,7 @@ describe.skipIf(shouldSkip)("Audiences tool chain (live)", () => {
 
     // 3. get_audience_by_id
     const byId = await apiClient.get<{ id?: string | null; name?: string | null }>(
-      undefined,
+      proxyToken,
       "/client/files/audience",
       { ID: picked.id! },
     );
@@ -132,7 +134,7 @@ describe.skipIf(shouldSkip)("Audiences tool chain (live)", () => {
     // 4. get_audience_by_name (search + client-side exact CI match)
     const searchByName = await searchFileInfos<{
       results?: Array<{ id?: string | null; name?: string | null }>;
-    }>(apiClient, undefined, {
+    }>(apiClient, proxyToken, {
       fileTypes: ["Audience"],
       searchString: picked.name!,
       pageSize: 255,
@@ -146,7 +148,7 @@ describe.skipIf(shouldSkip)("Audiences tool chain (live)", () => {
 
     // 5. get_audience_metadata — just verify it returns an object
     const metadata = await apiClient.get<Record<string, unknown>>(
-      undefined,
+      proxyToken,
       "/client/files/audience/metadata",
       { ID: picked.id! },
     );
@@ -161,7 +163,7 @@ describe.skipIf(shouldSkip)("Audiences tool chain (live)", () => {
     // 1. Fetch all definitions (configuration endpoint has no pagination)
     const all = await apiClient.get<{
       objects?: Array<{ id?: string | null; name?: string | null }>;
-    }>(undefined, "/client/configuration/audience-definitions");
+    }>(proxyToken, "/client/configuration/audience-definitions");
     const list = all?.objects ?? [];
 
     if (list.length === 0) {

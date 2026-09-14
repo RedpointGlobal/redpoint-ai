@@ -1,54 +1,88 @@
 ---
 name: rpi-admin
-title: RPI Admin & Health
-description: Connectivity, authentication, and health diagnostics — covers "am I logged in?", "am I authenticated to RPI?", "is the MCP server online?", "is the connection working?", cluster health/alerts, API error log, audit history. Use for ANY question about whether the integration, auth, or backend is functioning. Read-only; no user-data writes.
+title: RPI Admin, Identity & Diagnostics
+description: Connectivity, authentication, the authenticated CALLER's own identity, and cluster diagnostics/audit — covers "am I logged in?", "who am I / my profile", "which clients can I access? / my clients / list my clients" (the tenants the CALLER can reach — get_user_client_list, user-scoped, works per-user), "my recent items", "is my token valid?", "is the connection working?", login settings, the cluster API error log, and the CLUSTER/system-wide audit history. The skill for questions about ME (the caller) and about connectivity/diagnostics. (For SYSTEM HEALTH — "is the system up?", "any alerts?", "is RPI healthy?" — use rpi-health. For the CLUSTER-WIDE list of ALL tenants — "all clients", "every tenant" — use rpi-clients. For a CLIENT/tenant's own audit trail — "my audit history" — use rpi-operations. For a specific CLIENT's user directory use rpi-users-permissions; for CLUSTER-level users use rpi-cluster.) Read-only; no user-data writes.
 type: action
+clientIdFoundation: true
 mcpToolFilter:
-  - get_system_health_availability
+  - get_user_profile
+  - get_user_client_list
+  - get_user_recent_items
+  - verify_connection
+  - validate_token_status
+  - get_login_settings
   - get_cluster_api_error_log
   - get_cluster_audit_history
-  - verify_connection
+operations:
+  # verify_connection is a member of EVERY operation on purpose: it is the
+  # low-privilege, per-user, can't-403 connectivity/auth probe (/info/version),
+  # so whether a user can check their connection MUST NOT depend on the router
+  # guessing operation="auth". If it's dispatched under any other operation,
+  # verify_connection is still in the sub-agent's toolset — deterministic,
+  # not a phrase allowlist. (2026-08-17: operation="diagnostics" had hidden it,
+  # sending a plain connection check to the cluster-admin error log → 403.)
+  identity: [get_user_profile, get_user_client_list, get_user_recent_items, verify_connection]
+  auth: [verify_connection, validate_token_status, get_login_settings]
+  diagnostics: [get_cluster_api_error_log, get_cluster_audit_history, verify_connection]
 maxSteps: 5
-tags: [rpi, admin, health, diagnostics]
+tags: [rpi, admin, identity, diagnostics]
 ---
 
-# RPI Admin & Health
+# RPI Admin, Identity & Diagnostics
 
-Read-only diagnostics for the RPI cluster — health, errors, audit, and connection sanity. Use these when the user is asking about *the system itself* rather than the data inside a tenant. None of these tools write state.
+Read-only reads about **the caller (ME)** and **connectivity/diagnostics** — who the
+current credentials are, what they can reach, whether auth/connectivity work, and the
+cluster error/audit trail. Use these when the user asks about *themselves as the
+caller* or about *connectivity/diagnostics*, not the data inside a tenant. Nothing
+writes state. (SYSTEM HEALTH — "is the system up?" — is a separate skill: **rpi-health**.
+This skill has no health tool.)
+
+## Scope — the CALLER, not a named user (three "user" surfaces)
+
+This skill owns the **authenticated caller's own** identity — "who am I", "my profile",
+"which clients can I access", "my recent items". That is distinct from the other two
+"user" surfaces:
+
+- **THIS skill — the CALLER.** `get_user_profile` is *my* identity for the token
+  making the call. Never a lookup of some other named user.
+- **NOT a client's users.** A specific named user in a client's directory (their
+  details, groups, permissions) is the **rpi-users-permissions** skill.
+- **NOT cluster users.** A named cluster-level user's profile is the **rpi-cluster**
+  skill.
 
 Apply foundation guidance: respect `clientId` where applicable, surface raw error strings unmodified.
 
-**`clientId` handling.** Three cases:
+## Tool inventory & operations
 
-1. **No `clientId` provided** (most common — generic requests like "list my audiences") — OMIT the `clientId` argument entirely. The MCP server applies `RPI_DEFAULT_CLIENT_ID` from environment automatically. Do NOT ask the user for a clientId; do NOT refuse to proceed.
+### identity — the caller (ME)
+- `get_user_profile` — *my* RPI profile: display name, username, email, roles/permissions for the token making the call. "Who am I / what am I authorized to do."
+- `get_user_client_list` — the clients (tenants) *I* can access, id + name. Use to discover valid `X-ClientID` values before scoping a call. (This is MY reachable clients — the full tenant list is the **rpi-clients** skill.)
+- `get_user_recent_items` — *my* recently-accessed files/objects (caller-scoped convenience list).
 
-2. **`clientId` provided as a UUID** (8-4-4-4-12 hex, e.g. `a1b2c3d4-e5f6-7a8b-9c0d-ef1234567890`) — pass it through unchanged.
+### auth — connectivity & sign-in
+- `verify_connection` — auth + connectivity sanity check. Confirms the MCP server can reach RPI and auth works. Returns OIDC config, proxy-token status, login settings, and an `/info/version` probe.
+- `validate_token_status` — lightweight liveness check on *my* access token (active / expired / revoked). Use before a longer sequence of calls.
+- `get_login_settings` — the tenant's login/authentication settings — the configured identity provider (OpenID/Keycloak) and login options.
 
-3. **`clientId` provided as a non-UUID** (almost certainly a tenant *name* the parent agent forgot to resolve) — your sub-agent's tool filter does NOT include name-resolution. Stop and respond with a clear error asking the parent to redispatch via the **rpi-clients** skill to resolve the name to a UUID. Forwarding a name will fail with a 401 / "Client ID '00000000-0000-0000-0000-000000000000' not found" because RPI parses non-UUID input to the empty UUID.
-
-## Tool inventory
-
-- `get_system_health_availability` — point-in-time health probe across the cluster's services. Returns per-service availability and any active alerts.
-- `get_cluster_api_error_log` — recent error log entries from the RPI API service. Useful when something has been failing and the user wants to see why.
-- `get_cluster_audit_history` — change/audit trail across the cluster. Who did what, when, on which entity.
-- `verify_connection` — auth + connectivity sanity check. Confirms the MCP server can reach RPI and that auth is working. Returns OIDC config (if any), proxy-token status, login settings, and an `/info/version` probe.
+### diagnostics — errors & cluster audit
+- `get_cluster_api_error_log` — recent error log entries from the RPI API service. (The cluster's GENERAL error log and housekeeping log are the **rpi-cluster** skill.)
+- `get_cluster_audit_history` — the CLUSTER/system-wide change/audit trail. For a single CLIENT/tenant's own audit history ("my audit history"), that's the **rpi-operations** skill, not here.
 
 ## When to use which
 
 | User asks | Tool |
 |---|---|
-| "Is the system up?" / "any alerts?" | `get_system_health_availability` |
-| "Show me recent errors" / "what's been failing?" | `get_cluster_api_error_log` |
-| "Who changed X?" / "audit trail for tenant Y" | `get_cluster_audit_history` |
+| "Who am I?" / "my profile" / "what am I authorized to do?" | `get_user_profile` |
+| "Which clients can I access?" / "my clients" | `get_user_client_list` |
+| "My recent items" | `get_user_recent_items` |
 | "Verify the connection" / "is auth working?" | `verify_connection` |
+| "Is my token still valid?" | `validate_token_status` |
+| "How is sign-in / the IdP configured?" | `get_login_settings` |
+| "Show me recent errors" / "what's been failing?" | `get_cluster_api_error_log` |
+| "cluster/system-wide audit" / "who changed what across the cluster" | `get_cluster_audit_history` |
+| "Is the system up?" / "any alerts?" / "is RPI healthy?" | → use the **rpi-health** skill |
 
 ## Common workflows
-
-### "Is the system healthy?"
-
-1. `get_system_health_availability` with no args.
-2. Show the overall status + any individual services that are down or degraded. Surface alert messages verbatim — they're often actionable.
-3. If everything is green, say so concisely. Don't pad.
 
 ### "Show me recent errors"
 
@@ -56,21 +90,21 @@ Apply foundation guidance: respect `clientId` where applicable, surface raw erro
 2. Present each entry with its timestamp, severity, source service, and message. Group by service if the list is long.
 3. If the user is investigating a specific failure, suggest running `verify_connection` afterward to confirm connectivity is still working.
 
-### "What changed in tenant X?"
+### "What changed across the cluster?" (cluster/system-wide audit)
 
-1. `get_cluster_audit_history` scoped to the user's tenant via `clientId` (resolve via rpi-clients first if the user named the tenant by name).
+1. `get_cluster_audit_history` — the cluster-wide change trail. (A CLIENT/tenant's own "my audit history" is the **rpi-operations** skill, not this.)
 2. Filter by entity-type or actor as the user requests.
 3. Each entry has actor + timestamp + action + entity reference. Present chronologically (newest first or oldest first as the user asked).
 
-### "Verify the connection"
+### "Verify the connection" / "check my connection" / "am I connected?"
 
-1. `verify_connection`.
-2. Surface the bundle: OIDC issuer (if any), proxy-token validity, login settings, `/info/version` probe success.
-3. If anything failed, surface the error string verbatim. The OIDC / auth-failure messages are diagnostic-grade — don't paraphrase.
+1. `verify_connection` — and **ONLY** this tool. It already covers auth + connectivity (OIDC, proxy-token status, login settings, `/info/version`).
+2. A connection check is NOT a system-health check. This skill has no health tool by design; "is the system up?" / "any alerts?" is the **rpi-health** skill — a separate, explicit request. Don't reach for health on a plain connection check.
+3. Surface the bundle: OIDC issuer (if any), proxy-token validity, login settings, `/info/version` probe success.
+4. If anything failed, surface the error string verbatim. The OIDC / auth-failure messages are diagnostic-grade — don't paraphrase.
 
 ## Display guidance recap
 
-- Health output: green = "all services available," red/yellow = name the affected service.
 - Error log: show the most recent first; truncate stack traces only if the user explicitly wants brief output.
 - Audit: chronological order; include actor identity (user/service account/system).
 - Connection-verify: structured key/value rendering of the result; don't reformat field names.

@@ -23,16 +23,22 @@ if (existsSync(rootEnv)) {
   }
 }
 
-// Refuse to boot in auth-required mode without a real AUTH_SECRET. The
-// docker-compose default is `changeme-...` precisely so an operator who
-// flips AUTH_REQUIRED=true without configuring the secret fails loud here
-// instead of silently signing JWTs with a public string.
-if (process.env.AUTH_REQUIRED === "true") {
+// Secure-by-default: auth is REQUIRED unless AUTH_REQUIRED is explicitly "false".
+// This mirrors the request-path middleware (which gates unless AUTH_REQUIRED ===
+// "false"), so an UNSET AUTH_REQUIRED is auth-required here too. Refuse to boot
+// in that mode without a real AUTH_SECRET — fail loud at startup naming what's
+// missing, instead of silently signing JWTs with a placeholder / emitting
+// cryptic 401s at request time. (The docker-compose default is `changeme-...`
+// precisely so this trips.)
+if (process.env.AUTH_REQUIRED !== "false") {
   const secret = process.env.AUTH_SECRET ?? "";
   if (!secret || secret.startsWith("changeme-")) {
     console.error(
-      "[fatal] AUTH_REQUIRED=true but AUTH_SECRET is missing or still set to the changeme-* placeholder. " +
-        "Generate one with `openssl rand -base64 32` and set it in .env (or as an env var) before starting in auth-required mode.",
+      '[fatal] Auth is required (AUTH_REQUIRED is not "false") but AUTH_SECRET is ' +
+        "missing or still the changeme-* placeholder. Either generate a secret " +
+        "(`openssl rand -base64 32`) and set AUTH_SECRET in .env, or set " +
+        "AUTH_REQUIRED=false for local dev/eval (runs everything as the service " +
+        "account, no login).",
     );
     process.exit(1);
   }
@@ -105,6 +111,35 @@ if (process.env.A2A_ENABLED === "true") {
         `[a2a] failed to start: ${error instanceof Error ? error.message : error}\n`,
       );
     }
+  }
+}
+
+// Economic-viability instrumentation — OFF by default. Gated by
+// env:INSTRUMENTATION_ENABLED. When unset, no sink is registered, so every
+// capture site is a no-op (zero collection, zero writes). Dynamic import keeps
+// the fs sink out of the runtime when disabled. See docs/architecture.md
+// (cross-cutting subsystems).
+if (process.env.INSTRUMENTATION_ENABLED === "true") {
+  try {
+    const { FileJsonlSink } = await import("./instrumentation/file-sink.js");
+    const { configureInstrumentation } = await import("@redpoint-ai/shared");
+    const { mkdir } = await import("node:fs/promises");
+    // Default to the repo root for dev; containers set INSTRUMENTATION_SINK_PATH to
+    // a bind-mounted path (see the bundle compose) so the JSONL lands host-side and
+    // survives container recreation — otherwise it writes inside the container and
+    // is lost.
+    const sinkPath =
+      process.env.INSTRUMENTATION_SINK_PATH ??
+      join(__serverDir, "../../../instrumentation-events.jsonl");
+    // Pre-create the sink directory so the first write can't silently drop events
+    // (a missing/unmounted bind-mount dir is the common container failure).
+    await mkdir(dirname(sinkPath), { recursive: true });
+    configureInstrumentation(new FileJsonlSink(sinkPath));
+    process.stderr.write(`[instrumentation] enabled — sink: ${sinkPath}\n`);
+  } catch (error) {
+    process.stderr.write(
+      `[instrumentation] failed to enable: ${error instanceof Error ? error.message : error}\n`,
+    );
   }
 }
 

@@ -1,7 +1,7 @@
 ---
 name: rpi-clients
 title: RPI Clients (Tenants)
-description: Operational playbook for the RPI MCP server's client/tenant tools — listing tenants, looking up by ID or name. A "Client" in RPI is a tenant / customer-facing workspace; every other RPI operation runs in the context of a Client (carried via the X-ClientID header).
+description: The CLUSTER-WIDE / all-tenants (admin) client directory — listing or looking up EVERY Client provisioned on the cluster, by ID or name. A "Client" in RPI is a tenant / customer-facing workspace; every other RPI operation runs in the context of a Client (carried via the X-ClientID header). Use ONLY for explicit all-tenants / cluster-wide phrasing ("all clients", "every tenant", "list all clients on the cluster") — a cluster-admin view that requires cluster permissions. For the clients the CURRENT caller can access ("my clients", "list my clients", "which clients can I access?"), use rpi-admin (get_user_client_list), which is user-scoped.
 type: action
 mcpToolFilter:
   - list_clients

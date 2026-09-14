@@ -124,6 +124,24 @@ dist/
 
 `dist/` is gitignored — rebuilding regenerates it cleanly.
 
+### Binary & bundle naming
+
+The build artifacts follow ONE convention across both MCP servers — `{service}` = `rpi` | `drh`, `{os}` = `linux` | `windows`:
+
+- **Binary folder:** `rp-{service}-mcp-{os}-x64/`
+- **Binary:** `rp-{service}-mcp-{os}` (Linux) / `rp-{service}-mcp-{os}.exe` (Windows) — pattern `rp-{service}-mcp-{os}[-x64][.exe]`. The binary keeps a **stable, version-less** name on purpose: the launcher scripts and the Dockerfile `COPY` reference it by path, and an MCP-client config pointing at it must survive version bumps.
+- **Bundle zip:** `_rp-{service}_mcp-server_{os}-x64_{version}.zip` — note the zip **switches hyphens→underscores, adds a leading `_`, uses `mcp-server`** (not `mcp`), and carries `{version}`. (Produced by `bun run release:zip`.)
+- **In-folder templates:** `.env.example`, `README.txt`, `Start MCP Server ({OS}).sh` / `.bat`, `_rp-ai_quick-start_mcp-server.txt`.
+
+`{version}` is the **current app version** from `packages/shared/version.json` — numeric, no `v` prefix (e.g. `7.135`). It is embedded in the **zip** name so a **deployed version is identifiable from the artifact name on any platform**: a rep reads their version straight off the filename and support can always pin what someone is running. This is a traceability requirement, not cosmetic — keep it present and consistent across linux/windows.
+
+The full-stack **docker-container bundle** (produced by `bun run build:bundle`) follows the same `{version}` rule:
+
+- **Docker images:** `rp-ai-{service}:{version}` — `{service}` = `server` | `web` | `mcp-rpi` | `mcp-drh`.
+- **Container bundle zip:** `_rp-ai_web_docker-container_{version}.zip` (root-level layout, carries the four images + compose + `.env` + launcher scripts).
+
+Same `{version}` (app version, numeric, no `v`). `build:bundle` prunes older `rp-ai-*` image tags, keeping only the current version.
+
 ### Run the result
 
 1. Copy `dist/<platform>/.env.example` to `dist/<platform>/.env` and fill in the [environment variables](#environment-variables) above.

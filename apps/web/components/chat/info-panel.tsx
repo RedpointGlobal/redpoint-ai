@@ -7,6 +7,7 @@ import { DevToolsHooks } from '@assistant-ui/react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { APP_VERSION } from '@/lib/version';
+import { isBeforePageView } from '@/lib/trace-view';
 import {
   getWorkspace,
   getWorkspaceRuntimeStatus,
@@ -332,6 +333,23 @@ function ConfigTab({
         <Row label="Version" value={APP_VERSION} />
       </Section>
 
+      {runtime?.instrumentation && (
+        <Section title="Instrumentation">
+          {/* Server-global (same in every workspace) — labelled so it doesn't read
+              as per-workspace. Lets a tester self-verify collection is live. */}
+          <Row
+            label="Server instrumentation"
+            value={
+              !runtime.instrumentation.enabled
+                ? "off"
+                : runtime.instrumentation.sinkWritable
+                  ? "enabled · sink OK"
+                  : "enabled · sink not writable"
+            }
+          />
+        </Section>
+      )}
+
       <Section title="Provider">
         <Row label="Type"     value={config.provider.type} />
         <Row label="Model"    value={config.provider.model} />
@@ -579,10 +597,21 @@ function lifecycleToTelemetry(e: EventLog): TelemetryEvent {
   };
 }
 
-// Reset on every real document load (module re-evaluates), but survives
-// in-session React remounts (e.g. toggling the info panel closed/open). Used to
-// wipe the persisted server-side trace buffer exactly once per page refresh.
-let traceClearedForThisPageLoad = false;
+// Start-of-this-page-view boundary. The server trace buffer is process-global
+// and OUTLIVES page reloads, so on connect its replay includes events from a
+// PREVIOUS page view. We used to wipe the buffer on panel-open to hide those —
+// but that DESTROYED the current view's own events whenever the panel was opened
+// AFTER a chat run (the run's rich events were already buffered, and the clear
+// erased them → the panel showed only client-side lifecycle events). Instead we
+// keep the buffer intact and just hide replayed events older than this boundary.
+//
+// performance.timeOrigin is the document's navigation start — stable for the
+// whole page view regardless of when this module first evaluates (so a chat run
+// made before the panel is ever opened is still newer than the boundary and stays
+// visible), and it resets on a real reload. Same-machine dev has no client/server
+// clock skew; a tiny skew only shifts the cutoff by that amount.
+const PAGE_VIEW_START_MS =
+  typeof performance !== "undefined" ? performance.timeOrigin : Date.now();
 
 // Locale-aware HH:mm:ss.SSS formatter. Forced to 24-hour so the terminal-parity
 // row layout doesn't shift width when an AM/PM token appears in 12-hour locales.
@@ -631,6 +660,10 @@ function TrafficTab({
   // a Tab close→reopen would double-render historic events. Using a ref'd
   // Set avoids per-event closure churn.
   const append = (ev: TelemetryEvent) => {
+    // Drop events from a PREVIOUS page view — the process-global server buffer
+    // replays them on connect, but they aren't part of this view's traffic.
+    // (Non-destructive: the buffer keeps them; we just don't display them here.)
+    if (isBeforePageView(ev.timestamp, PAGE_VIEW_START_MS)) return;
     const key = `${ev.timestamp}|${ev.type}|${ev.message}`;
     if (seenKeys.current.has(key)) return;
     seenKeys.current.add(key);
@@ -666,9 +699,11 @@ function TrafficTab({
 
     const subscribe = () => {
       if (closed) return;
-      es = new EventSource(
-        `${apiUrl}/api/v1/workspaces/${workspaceId}/trace/stream`,
-      );
+      // Same-origin auth-forwarding proxy (apps/web), NOT a direct EventSource to
+      // apps/server: the browser EventSource can't set Authorization, so a direct
+      // hit 401s under auth=true. The proxy injects the session credential and
+      // pipes the SSE through. Same-origin → the browser sends the session cookie.
+      es = new EventSource(`/api/proxy/trace/${workspaceId}/stream`);
       es.onmessage = (msg) => {
         try {
           const ev = JSON.parse(msg.data) as TelemetryEvent;
@@ -686,19 +721,11 @@ function TrafficTab({
       };
     };
 
-    // On a real page load (refresh), wipe the persisted server-side trace
-    // buffer ONCE before subscribing — otherwise the stream replays the
-    // previous page-session's events and the panel looks like it never
-    // emptied. The module flag survives in-session panel toggles, so
-    // closing/reopening the panel keeps the current session's trace.
-    if (!traceClearedForThisPageLoad) {
-      traceClearedForThisPageLoad = true;
-      fetch(`${apiUrl}/api/v1/workspaces/${workspaceId}/trace?clear=1`)
-        .catch(() => {})
-        .finally(subscribe);
-    } else {
-      subscribe();
-    }
+    // Subscribe immediately. We do NOT clear the server buffer here — the
+    // PAGE_VIEW_START_MS filter in append() hides a previous page view's replayed
+    // events without destroying this view's own (which the old clear-on-open
+    // erased when the panel was opened after a chat run).
+    subscribe();
 
     return () => {
       closed = true;
@@ -741,10 +768,9 @@ function TrafficTab({
     for (const [id] of DevToolsHooks.getApis()) DevToolsHooks.clearEventLogs(id);
     seenKeys.current.clear();
     setEntries([]);
-    // Best-effort server-side clear too; ignored if it fails.
-    fetch(
-      `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"}/api/v1/workspaces/${workspaceId}/trace?clear=1`,
-    ).catch(() => {});
+    // Best-effort server-side clear too; ignored if it fails. Same-origin proxy
+    // (injects the session credential) — a direct apps/server hit 401s under auth=true.
+    fetch(`/api/proxy/trace/${workspaceId}?clear=1`).catch(() => {});
   };
 
   // Export — entries are already TelemetryEvents, so the JSON envelope is

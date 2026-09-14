@@ -18,7 +18,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { LogIn, LogOut } from "lucide-react";
@@ -33,6 +33,32 @@ export function RpiHeaderAffordance() {
   // Modal visibility — only meaningful in the signed-out branch, but
   // declared at top level because hooks must be called unconditionally.
   const [open, setOpen] = useState(false);
+
+  // Runtime auth mode. Under AUTH_REQUIRED=false there is no login (everything
+  // runs as the service account), so this whole affordance — the "Connect RPI"
+  // button AND its modal — is dead/misleading and must not render. Gate on the
+  // runtime /api/auth-mode signal (server reads process.env live), NOT the
+  // build-inlined client env, so a .env flip takes effect on restart without a
+  // rebuild. `null` = still loading → render nothing (no flash of the button
+  // before the mode is known). On fetch error, default to showing it: auth=true
+  // is the secure default, and hiding a working login control is the worse miss.
+  const [authRequired, setAuthRequired] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth-mode")
+      .then((r) => (r.ok ? r.json() : { authRequired: true }))
+      .then((d: { authRequired?: boolean }) => {
+        if (!cancelled) setAuthRequired(d.authRequired !== false);
+      })
+      .catch(() => {
+        if (!cancelled) setAuthRequired(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (authRequired !== true) return null;
 
   const rpiUsername = session?.rpi?.username;
 

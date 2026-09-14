@@ -26,26 +26,40 @@
  */
 
 import NextAuth from "next-auth";
+import type { NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Keycloak from "next-auth/providers/keycloak";
+import { resolveEnvLocation, ENV_LOCATION_COOKIE } from "./env-location";
+import { rpiTokenEndpoint } from "./rpi-token-endpoint";
+import {
+  keycloakPasswordGrant,
+  keycloakRefresh,
+  keycloakOidcOptions,
+  mapKeycloakOidcAccount,
+  discoverKeycloakSso,
+  authUrlFromRedirect,
+  type OidcAccountLike,
+} from "./keycloak-sso";
+
+// Explicit Keycloak SSO redirect_uri (RPI_AI_AGENT_REDIRECT_URL): when set, pin
+// AUTH_URL to its origin so Auth.js sends a DETERMINISTIC redirect_uri
+// (<origin>/api/auth/callback/sso) on BOTH the authorize and token legs —
+// matching Keycloak's exact-registered value regardless of the request origin
+// (proxy/host quirks). Only when the var is set AND AUTH_URL isn't already
+// pinned; unset → Auth.js derives from the request origin (unchanged behavior).
+// Module-init side-effect (before NextAuth reads the env), mirroring how AUTH_URL
+// is normally provided by the environment.
+{
+  const _derivedAuthUrl = authUrlFromRedirect(process.env.RPI_AI_AGENT_REDIRECT_URL);
+  if (_derivedAuthUrl && !process.env.AUTH_URL) {
+    process.env.AUTH_URL = _derivedAuthUrl;
+  }
+}
 
 // apps/server URL — used by the API-key Credentials provider to validate
 // platform-issued API keys against /api/v1/providers.
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
-/**
- * RPI's OAuth token endpoint lives at the API ROOT, not under /api/v2/.
- * If the configured RPI_INTEGRATION_API_URL contains a /api/v2 suffix,
- * strip it so we hit /connect/token correctly.
- *
- * Returns null if RPI_INTEGRATION_API_URL is not configured — in that case
- * the rpi-native provider's authorize() will refuse to attempt login.
- */
-function rpiTokenEndpoint(): string | null {
-  const raw = process.env.RPI_INTEGRATION_API_URL;
-  if (!raw) return null;
-  const base = raw.replace(/\/api\/v2\/?$/, "").replace(/\/$/, "");
-  return `${base}/connect/token`;
-}
 
 /**
  * Wire-format response from RPI's /connect/token endpoint.
@@ -73,8 +87,28 @@ interface RpiTokenResponse {
  */
 const RPI_REFRESH_MARGIN_MS = 60_000;
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
-  providers: [
+// Memoized OIDC (redirect-flow) discovery — the public issuer/clientId are
+// stable, so discover once and reuse, keeping the per-request lazy config cheap.
+// Cached only on success; a transient discovery failure simply omits the
+// redirect provider that request and is retried next time.
+let cachedOidc: { issuer: string; clientId: string } | null = null;
+async function getKeycloakOidc(): Promise<{ issuer: string; clientId: string } | null> {
+  if (cachedOidc) return cachedOidc;
+  const sso = await discoverKeycloakSso();
+  if (sso) cachedOidc = { issuer: sso.issuer, clientId: sso.clientId };
+  return cachedOidc;
+}
+
+// NextAuth v5 accepts a config FUNCTION (evaluated per request, receiving the
+// NextRequest). We use the request for TWO things: (1) the Keycloak OIDC redirect
+// provider is added from a DISCOVERED issuer (no hardcoded issuer/secret),
+// appended only once discovery yields a public issuer; (2) on the OIDC callback
+// the jwt callback (closing over `request`) reads the short-TTL Environment
+// Location carrier cookie — the redirect path's only way to carry the selected
+// rpiUrl, since a full-page redirect can't pass a credential. The Credentials
+// providers are static.
+export const { handlers, auth, signIn, signOut } = NextAuth(async (request) => {
+  const providers: NextAuthConfig["providers"] = [
     Credentials({
       id: "credentials",
       name: "API Key",
@@ -118,6 +152,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         username: { label: "Username", type: "text" },
         password: { label: "Password", type: "password" },
+        // Per-request RPI "Environment Location" (the UI field is Phase 1b). When
+        // provided, the login targets this instance and it rides the session for
+        // per-request forwarding as X-RPI-URL. Empty = the env default instance.
+        rpiUrl: { label: "Environment Location", type: "text" },
       },
       async authorize(credentials) {
         // signIn() always passes credentials as a plain object; type-guard
@@ -126,7 +164,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = credentials?.password;
         if (typeof username !== "string" || typeof password !== "string") return null;
 
-        const tokenUrl = rpiTokenEndpoint();
+        // Per-request Environment Location — SSRF-guard at the web entry.
+        // undefined → env default; null → present-but-rejected (fail login);
+        // string → validated target.
+        const loc = resolveEnvLocation(credentials?.rpiUrl);
+        if (loc === null) {
+          console.error(
+            "[auth.rpi-native] rejected non-allowlisted Environment Location URL",
+          );
+          return null;
+        }
+        const rpiUrl = loc;
+
+        const tokenUrl = rpiTokenEndpoint(rpiUrl);
         const clientId = process.env.RPI_OAUTH_CLIENT_ID;
         const clientSecret = process.env.RPI_OAUTH_CLIENT_SECRET;
         // Refuse to attempt login if the deployment is misconfigured — fail
@@ -175,6 +225,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             rpiAccessToken: data.access_token,
             rpiRefreshToken: data.refresh_token,
             rpiExpiresAt: Date.now() + data.expires_in * 1000,
+            rpiAuthSource: "rpi-native",
+            rpiUrl,
           };
         } catch (err) {
           console.error("[auth.rpi-native] login failed:", err);
@@ -182,7 +234,76 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
       },
     }),
-  ],
+    /**
+     * SSO (interim) — OAuth2 password grant against the realm's Keycloak token
+     * endpoint (PUBLIC client, no secret). Same wire shape as rpi-native, just a
+     * different endpoint, discovered from RPI login-settings' public
+     * `openIDIssuer`. The Keycloak JWT is accepted by RPI directly and the
+     * apps/server OIDC branch, and stable-id metering keys it to rpi:<stableId>.
+     * All the moving parts live in lib/keycloak-sso.ts (unit-tested there);
+     * this provider is a thin adapter into NextAuth's User contract.
+     *
+     * Signed in via signIn("keycloak-sso", { username, password }).
+     */
+    Credentials({
+      id: "keycloak-sso",
+      name: "Single Sign-On",
+      credentials: {
+        username: { label: "Username", type: "text" },
+        password: { label: "Password", type: "password" },
+        // Per-request Environment Location — carried like the native path. Auth
+        // stays on the central Keycloak (static issuer); this only sets which RPI
+        // instance the session TARGETS (rpiUrl → the X-RPI-URL chain). Empty →
+        // env default instance.
+        rpiUrl: { label: "Environment Location", type: "text" },
+      },
+      async authorize(credentials) {
+        const username = credentials?.username;
+        const password = credentials?.password;
+        if (typeof username !== "string" || typeof password !== "string") return null;
+
+        // SSRF-guard the selected instance at the web entry (undefined → default,
+        // null → reject, string → validated). Auth stays central; this only sets
+        // which instance the session TARGETS.
+        const loc = resolveEnvLocation(credentials?.rpiUrl);
+        if (loc === null) {
+          console.error(
+            "[auth.keycloak-sso] rejected non-allowlisted Environment Location URL",
+          );
+          return null;
+        }
+        const rpiUrl = loc;
+
+        const session = await keycloakPasswordGrant(username, password);
+        if (!session) return null;
+        return {
+          id: username,
+          name: username,
+          rpiAccessToken: session.rpiAccessToken,
+          rpiRefreshToken: session.rpiRefreshToken,
+          rpiExpiresAt: session.rpiExpiresAt,
+          rpiAuthSource: "keycloak-sso",
+          rpiUrl,
+        };
+      },
+    }),
+  ];
+
+  // SSO — the CORRECT path: Keycloak OIDC authorization_code + PKCE
+  // (S256) redirect flow, PUBLIC client (no secret). Added only when discovery
+  // yields a public issuer; NextAuth discovers authorize/token/jwks from it. The
+  // callback route (/api/auth/callback/sso) is served by the [...nextauth]
+  // handler. NOTE: this realm's `rpi` client only has the interaction app's
+  // redirect URI registered today, so a live redirect 400s "invalid redirect_uri"
+  // until OURS is registered — expected/deferred, not a bug. The interim
+  // password-grant provider (keycloak-sso) keeps SSO working meanwhile.
+  const oidc = await getKeycloakOidc();
+  if (oidc) {
+    providers.push(Keycloak(keycloakOidcOptions(oidc.issuer, oidc.clientId)));
+  }
+
+  return {
+  providers,
   callbacks: {
     /**
      * Called whenever a JWT is created (sign-in) or accessed (every request
@@ -194,7 +315,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
      *   - On every other request: `user` is undefined; do lazy refresh if the
      *     RPI access token is near expiry.
      */
-    async jwt({ token, user }) {
+    async jwt({ token, user, account }) {
       // NextAuth v5's interface-augmentation chain (`next-auth` →
       // `@auth/core/jwt`) doesn't reliably propagate to consumers in this
       // setup, so we treat the JWT shape as a typed dictionary at the
@@ -213,6 +334,46 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         t.rpiAccessToken = u.rpiAccessToken;
         t.rpiRefreshToken = u.rpiRefreshToken;
         t.rpiExpiresAt = u.rpiExpiresAt;
+        // Which provider minted this token — routes the lazy refresh below.
+        // Default to rpi-native for back-compat with pre-SSO sessions.
+        t.rpiAuthSource =
+          u.rpiAuthSource === "keycloak-sso" ? "keycloak-sso" : "rpi-native";
+        // Per-request Environment Location — ride the session so the proxy
+        // forwards it as X-RPI-URL and the refresh targets the same instance.
+        t.rpiUrl = typeof u.rpiUrl === "string" ? u.rpiUrl : undefined;
+      }
+
+      // === Sign-in branch — OIDC redirect provider (id "keycloak") ===--------
+      // Its tokens arrive via `account`, not `user`. Map them into the SAME rpi*
+      // fields so X-RPI-Token forwarding, lazy refresh, and metering are
+      // identical to the password paths. rpiAuthSource stays "keycloak-sso" so
+      // the refresh below routes to the public Keycloak endpoint (keycloakRefresh)
+      // for BOTH Keycloak paths — the token endpoint + public client are the same.
+      const acct = account as { provider?: string } | null | undefined;
+      if (acct?.provider === "sso") {
+        const mapped = mapKeycloakOidcAccount(account as OidcAccountLike);
+        if (mapped) {
+          t.rpiUsername =
+            typeof u?.name === "string" ? u.name : t.rpiUsername;
+          t.rpiAccessToken = mapped.rpiAccessToken;
+          t.rpiRefreshToken = mapped.rpiRefreshToken;
+          t.rpiExpiresAt = mapped.rpiExpiresAt;
+          t.rpiAuthSource = "keycloak-sso";
+          // Environment Location carried across the OIDC redirect via the
+          // short-TTL cookie set by /api/rpi-location/select before signIn().
+          // `request` is the callback request (config fn runs per-request; this
+          // callback closes over it). FAIL-SAFE + SSRF re-check: only a validated
+          // allowlisted https URL (string) targets that instance. A missing /
+          // expired / malformed / tampered cookie resolves to undefined or null,
+          // and BOTH leave rpiUrl unset → forwarding falls to the env default,
+          // NEVER a wrong instance. (Unlike the login-credential paths, a rejected
+          // carrier does NOT fail the login here — the user already authenticated
+          // at the central issuer; we simply default the instance.)
+          const carried = resolveEnvLocation(
+            request?.cookies.get(ENV_LOCATION_COOKIE)?.value,
+          );
+          t.rpiUrl = typeof carried === "string" ? carried : undefined;
+        }
       }
 
       // === Per-request branch — lazy refresh of RPI token ===----------------
@@ -233,7 +394,33 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         typeof expiresAt === "number" &&
         Date.now() > expiresAt - RPI_REFRESH_MARGIN_MS
       ) {
-        const tokenUrl = rpiTokenEndpoint();
+        // Keycloak SSO sessions refresh against the discovered PUBLIC Keycloak
+        // endpoint (public client, NO secret) — discovery + POST live in
+        // lib/keycloak-sso.ts. On null (rejected OR currently undiscoverable) we
+        // drop the RPI session rather than forward a stale near-expired token,
+        // so the user re-logs in. (The rpi-native branch below keeps the token
+        // on a bare network throw; SSO's extra discovery hop makes replicating
+        // that split not worth the duplication — boxed in the report.)
+        if (t.rpiAuthSource === "keycloak-sso") {
+          const refreshed = await keycloakRefresh(refreshToken);
+          if (refreshed) {
+            t.rpiAccessToken = refreshed.rpiAccessToken;
+            t.rpiRefreshToken = refreshed.rpiRefreshToken ?? refreshToken;
+            t.rpiExpiresAt = refreshed.rpiExpiresAt;
+          } else {
+            t.rpiAccessToken = undefined;
+            t.rpiRefreshToken = undefined;
+            t.rpiExpiresAt = undefined;
+            t.rpiUsername = undefined;
+            t.rpiAuthSource = undefined;
+          }
+          return token;
+        }
+
+        // Refresh against the SAME instance the session logged in to.
+        const tokenUrl = rpiTokenEndpoint(
+          typeof t.rpiUrl === "string" ? t.rpiUrl : undefined,
+        );
         const clientId = process.env.RPI_OAUTH_CLIENT_ID;
         const clientSecret = process.env.RPI_OAUTH_CLIENT_SECRET;
         if (tokenUrl && clientId && clientSecret) {
@@ -318,4 +505,5 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     // apps/server/src/index.ts:31–34) is the encryption key.
     strategy: "jwt",
   },
+  };
 });

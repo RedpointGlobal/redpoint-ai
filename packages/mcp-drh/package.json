@@ -27,7 +27,7 @@
     "build:windows": "bun build --compile --target=bun-windows-x64 src/http.ts --outfile dist/rp-drh-mcp-windows-x64/rp-drh-mcp-windows.exe",
     "//disabled:build:macos": "DISABLED \u2014 not in the release set (build:all = linux + windows only). Rename key back to build:macos to re-enable. bun build --compile --target=bun-darwin-arm64 src/http.ts --outfile dist/rp-drh-mcp-macos-arm64/rp-drh-mcp-macos-arm64",
     "//disabled:build:macos-intel": "DISABLED \u2014 not in the release set. Rename key back to build:macos-intel to re-enable. bun build --compile --target=bun-darwin-x64 src/http.ts --outfile dist/rp-drh-mcp-macos-intel/rp-drh-mcp-macos-intel",
-    "build:all": "bun run build:linux && bun run build:windows && bun run build:copy-templates",
+    "build:all": "bun run ../../scripts/env-scopes.ts check && bun run build:linux && bun run build:windows && bun run build:copy-templates && SMOKE_SVC=drh bun run ../../scripts/smoke-binary.ts",
     "build:copy-templates": "bun run scripts/copy-dist-templates.ts",
     "release:zip": "bun run scripts/release-zip.ts"
   },

@@ -21,7 +21,7 @@
  * Run: `bun run build:bundle`  (requires Docker running + a filled-in ./.env)
  */
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   readFileSync,
@@ -31,6 +31,7 @@ import {
   mkdirSync,
   rmSync,
   statSync,
+  readdirSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -201,6 +202,77 @@ try {
     console.log(
       `[build:bundle] pruned ${stale.length} older rp-ai-* image tag(s), keeping :${version}`,
     );
+  }
+
+  // 6b. Sweep stale scratch EXTRACTION dirs in dist/ (never the deliverable zip).
+  //     The smokes themselves extract to the OS temp dir, not here — but MANUALLY
+  //     extracting a bundle zip to run start.bat (dist/_run_*, dist/_smoke_bundle_run)
+  //     leaves multi-GB folders behind. Scoped to our scratch prefixes so a real
+  //     artifact (the *.zip, or anything a user parked here) is never touched.
+  try {
+    for (const name of readdirSync(distDir, { withFileTypes: true })) {
+      if (!name.isDirectory()) continue;
+      if (/^_run_|^_smoke/.test(name.name)) {
+        rmSync(join(distDir, name.name), { recursive: true, force: true });
+        console.log(`[build:bundle] swept stale dist scratch dir: ${name.name}`);
+      }
+    }
+  } catch {
+    /* dist/ may not exist on a first run — nothing to sweep */
+  }
+
+  // 7. Smoke the freshly-built bundle through the REP PATH — the WEB entry point
+  //    (web→server→mcp→rpi), authed when the baked .env ships auth=true.
+  //
+  //    ENGINE CAVEAT (why this is NOT a hard gate by default): this smoke stands up
+  //    the bundle stack on whatever docker engine build:bundle is run against. The
+  //    bundle SHIPS to and RUNS on Windows Docker Desktop, but a build host may have
+  //    a separate WSL-native docker engine whose container network CANNOT route to a
+  //    private backend subnet (e.g. an on-prem RPI on a 10.x VPN address). On such a
+  //    host the smoke false-fails with `mcp_unavailable` even though the bundle is
+  //    fine on Docker Desktop — so a wrong-engine smoke must NEVER block the release.
+  //    The AUTHORITATIVE rep-path gate is running start_redpoint-ai.bat on Docker
+  //    Desktop (the rep's actual runtime) and driving the web UI, or running
+  //    scripts/smoke-bundle.ts with SMOKE_DOCKER=docker.exe + SMOKE_NO_LIFECYCLE=1
+  //    against that launched stack.
+  //
+  //    Default: run the smoke for its diagnostics but treat a failure as a WARNING,
+  //    not a build failure. SMOKE_BUNDLE_STRICT=1 restores the hard gate (exit 1) —
+  //    use it only on a host whose docker engine can actually reach the backends
+  //    (e.g. Docker Desktop, pinned via SMOKE_DOCKER=docker.exe). SMOKE_BUNDLE_SKIP=1
+  //    skips it entirely. SMOKE_DOCKER is forwarded so the engine can be pinned.
+  if (process.env.SMOKE_BUNDLE_SKIP === "1") {
+    console.warn(
+      "\n[build:bundle] bundle smoke SKIPPED (SMOKE_BUNDLE_SKIP=1) — the rep-path web→server→mcp→rpi chain was NOT verified for this zip. Verify via start_redpoint-ai.bat on Docker Desktop.",
+    );
+  } else {
+    const strict = process.env.SMOKE_BUNDLE_STRICT === "1";
+    // The compose bind-mounts ./instrumentation relative to its own dir (the stage).
+    mkdirSync(join(stage, "instrumentation"), { recursive: true });
+    console.log(
+      `\n[build:bundle] smoking the bundle through the web entry point (rep path)${strict ? " [STRICT]" : ""} ...`,
+    );
+    const smoke = spawnSync("bun", ["run", join(repoRoot, "scripts", "smoke-bundle.ts")], {
+      cwd: stage,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        SMOKE_COMPOSE_FILE: join(stage, "docker-compose.yml"),
+        SMOKE_ENV_FILE: join(stage, ".env"),
+        SMOKE_PROJECT: "rpai-bundle-smoke",
+      },
+    });
+    if (smoke.status !== 0) {
+      if (strict) {
+        console.error(
+          "[build:bundle] ERROR: bundle smoke FAILED (SMOKE_BUNDLE_STRICT) — refusing to trust this bundle.",
+        );
+        process.exit(1);
+      }
+      console.warn(
+        "\n[build:bundle] WARNING: bundle smoke did NOT pass on this build engine. If this host's docker cannot reach the backends (e.g. a WSL-native engine vs a private RPI subnet), this is a FALSE failure — the bundle is still produced. Verify the rep path AUTHORITATIVELY via start_redpoint-ai.bat on Docker Desktop before shipping. (Re-run with SMOKE_BUNDLE_STRICT=1 on a backend-reachable engine to hard-gate.)",
+      );
+    }
   }
 
   console.log("[build:bundle] OK.");

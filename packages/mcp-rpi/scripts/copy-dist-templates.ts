@@ -35,6 +35,7 @@
  */
 
 import { mkdirSync, writeFileSync, existsSync, readFileSync, chmodSync } from "fs";
+import { parseScopedEnv, renderBinaryTemplate } from "../../../scripts/env-scopes";
 
 /** Normalize to CRLF for Windows batch files. Collapses \r?\n first, so re-running cannot
  *  double-convert an already-CRLF string. */
@@ -274,17 +275,27 @@ different ports, so they can run at the same time.
     - The binary     rp-rpi-mcp-windows.exe  /  rp-rpi-mcp-linux
                      rp-drh-mcp-windows.exe  /  rp-drh-mcp-linux
     - A launcher     Start MCP Server (Windows).bat  /  (Linux).sh
-    - .env           already filled in - nothing to configure
+    - .env.example   keys only — copy to .env and fill in your values
     - README.txt
 
 
-(4) Double-click the launcher:
+(4) Copy .env.example to .env and fill in your values:
+
+    RPI    RPI_INTEGRATION_API_URL, RPI_OAUTH_CLIENT_ID,
+           RPI_OAUTH_CLIENT_SECRET, RPI_DEFAULT_CLIENT_ID
+    DRH    DRH_API_URL, DRH_DEFAULT_CLIENT_ID,
+           DRH_PROXY_USER, DRH_PROXY_PASS
+
+    (The bundle ships keys only — no secrets — so this step is required.)
+
+
+(5) Double-click the launcher:
 
     Windows:  Start MCP Server (Windows).bat
     Linux:    Start MCP Server (Linux).sh
 
 
-(5) The server is listening at:
+(6) The server is listening at:
 
     RPI    http://localhost:3002/mcp
     DRH    http://localhost:3003/mcp
@@ -292,7 +303,7 @@ different ports, so they can run at the same time.
     Point your MCP client at that URL.
 
 
-(6) When you're done: close the launcher window (or Ctrl+C if it is
+(7) When you're done: close the launcher window (or Ctrl+C if it is
     attached to a terminal).
 
 
@@ -326,48 +337,28 @@ Is it up?  Open the health URL in a browser:
 POINTING AT YOUR OWN INSTANCE
 ------------------------------------------------------------------------
 
-The shipped .env is preconfigured against a Redpoint sandbox. To use your
-own environment, edit .env and restart the launcher:
+The bundle ships .env.example (keys only, no secrets). Copy it to .env and
+fill in the values for your environment, then restart the launcher:
 
     RPI    RPI_INTEGRATION_API_URL, RPI_OAUTH_CLIENT_ID,
            RPI_OAUTH_CLIENT_SECRET, RPI_DEFAULT_CLIENT_ID
     DRH    DRH_API_URL, DRH_DEFAULT_CLIENT_ID,
            DRH_PROXY_USER, DRH_PROXY_PASS
 
-The .env carries working credentials — treat the extracted folder as
+Once you fill in .env it holds real credentials — treat the folder as
 sensitive and do not repost it.
 `;
 
-const envExampleContent = `# RPI MCP Server — standalone distribution
-#
-# Copy this file to \`.env\` and fill in your values.
-# Place the resulting \`.env\` in the same folder as the binary,
-# then launch the server.
-
-# RPI instance root URL (no /api/v2 suffix — the server appends it)
-RPI_INTEGRATION_API_URL=https://rpi.your-company.com
-
-# OAuth2 client credentials for the RPI /connect/token password grant.
-RPI_OAUTH_CLIENT_ID=
-RPI_OAUTH_CLIENT_SECRET=
-
-# Default value for the X-ClientID header (the RPI tenant/workspace ID).
-# Used as a fallback when a tool call doesn't carry an explicit clientId.
-RPI_DEFAULT_CLIENT_ID=
-
-
-# Inbound token validation. Keep \`false\` for local dev; set \`true\` in
-# production to require callers to pass an RPI-valid Bearer token.
-AUTH_REQUIRED=false
-
-# Optional proxy user — a native RPI service account used as a fallback
-# when no per-user token is present on an incoming request.
-# Setting RPI_PROXY_USER and RPI_PROXY_PASS implicitly enables the proxy.
-# Set RPI_PROXY_ENABLED=false to force-disable it.
-# RPI_PROXY_USER=your-service-account-username
-# RPI_PROXY_PASS=your-service-account-password
-# RPI_PROXY_ENABLED=false
-`;
+// DERIVED from the committed root .env.example (the single source of truth for
+// scope tags + keys) via scripts/env-scopes.ts — no hand-maintained key list, so
+// this template can never drift from the root. It carries ONLY mcp-rpi's scoped
+// keys (AUTH_REQUIRED + RPI_*), secrets EMPTY: nothing secret ships in the zip
+// (decision B). The rep copies it to .env and fills in values.
+const envExampleContent = renderBinaryTemplate(
+  parseScopedEnv(readFileSync(join(repoRoot, ".env.example"), "utf8")).vars,
+  "mcp-rpi",
+  "RPI MCP Server",
+);
 
 // ---------------------------------------------------------------------------
 // Per-platform manifest
@@ -434,37 +425,11 @@ const platforms: PlatformDef[] = [
 // ---------------------------------------------------------------------------
 
 let platformsWritten = 0;
-let envCopied = 0;
 
-const rootEnv = join(repoRoot, ".env");
-const hasRootEnv = existsSync(rootEnv);
-
-/**
- * Build the shipped `.env` as a DOMAIN-SCOPED slice of the developer's root .env
- * — the single source of truth for both keys and values.
- *
- * The RPI standalone server ships only its own product's config: keys matching
- * /^RPI_/ plus the shared AUTH_REQUIRED. Everything else in root .env is excluded
- * by construction — least privilege — so a single-purpose tool folder never
- * carries a secret it doesn't use: the other product's creds (DRH_ keys), the
- * app's LLM provider keys (AZURE_ keys), AUTH_SECRET, dev-only tooling secrets
- * (SEMGREP), COMPOSE_PROJECT_NAME. `.env.example` above is documentation only;
- * it is NOT the source of the shipped `.env`.
- */
-const DOMAIN_PREFIX = "RPI_";
-const SHARED_KEYS = new Set(["AUTH_REQUIRED"]);
-function buildShippedEnv(): string {
-  if (!hasRootEnv) return "";
-  const KV = /^([A-Za-z_][A-Za-z0-9_]*)=/;
-  const out: string[] = [];
-  for (const line of readFileSync(rootEnv, "utf8").split(/\r?\n/)) {
-    const m = line.match(KV);
-    if (!m) continue;
-    const key = m[1];
-    if (key.startsWith(DOMAIN_PREFIX) || SHARED_KEYS.has(key)) out.push(line);
-  }
-  return out.join("\n") + "\n";
-}
+// Decision B: NO secret value ships in the binary zip. The bundle carries only
+// the empty, scope-sliced .env.example (keys only) derived above; the rep copies
+// it to .env and fills in values. Double-click-with-real-values convenience lives
+// in the internal full-stack container, never in a public/retail binary download.
 
 for (const p of platforms) {
   const subdir = join(dst, p.subdir);
@@ -491,24 +456,12 @@ for (const p of platforms) {
 
   writeFileSync(join(subdir, QUICK_START_NAME), quickStartContent);
 
-  // Ship a REAL, working .env. These binaries go to internal reps, not a public
-  // registry — the point is a folder that runs on double-click with nothing to
-  // configure, matching the docker bundle. Derived, not copied: see
-  // buildShippedEnv() for why a wholesale copy is the wrong move.
-  if (hasRootEnv) {
-    writeFileSync(join(subdir, ".env"), buildShippedEnv());
-    envCopied += 1;
-  }
+  // Decision B: no real .env is written into the bundle — only the empty,
+  // scope-sliced .env.example above. Public/retail downloads carry zero secrets.
 
   platformsWritten += 1;
 }
 
-if (hasRootEnv) {
-  console.log(
-    `[copy-dist-templates] Wrote ${platformsWritten} platform bundle(s) + wrote domain-scoped .env into ${envCopied} subdir(s) (scoped slice of root .env; shipped in the zip)`,
-  );
-} else {
-  console.log(
-    `[copy-dist-templates] Wrote ${platformsWritten} platform bundle(s) to ${dst} (no root .env to copy — customer flow)`,
-  );
-}
+console.log(
+  `[copy-dist-templates] Wrote ${platformsWritten} platform bundle(s) to ${dst} (empty scope-sliced .env.example only — no secrets shipped)`,
+);

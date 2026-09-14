@@ -547,6 +547,26 @@ export function getSubAgentToolCalls(
   return out;
 }
 
+/**
+ * ORCHESTRATOR-level tool calls — the parent's own `tool-call` events (e.g.
+ * render_view_dashboard, render_chart, set_active_tenant), NOT skill dispatches or
+ * sub-agent calls. Phase 2 (#27957) moved dashboards from skill routing to the
+ * deterministic render_view_dashboard tool, which the parent calls directly — this
+ * lets a scenario assert that routing DECISION (the right tool + its viewId) where
+ * the skill-based path (getRoutedSkill/subAgentToolCalls) sees nothing.
+ */
+export function getOrchestratorToolCalls(
+  events: TelemetryEvent[],
+): Array<{ toolName: string; args: unknown }> {
+  const out: Array<{ toolName: string; args: unknown }> = [];
+  for (const e of events) {
+    if (e.type === "tool-call" && e.toolName) {
+      out.push({ toolName: e.toolName, args: (e as { args?: unknown }).args });
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Item 4 — probe-paced quota gate (2026-05-28 reverse-port from terminal,
 // direct-Azure Path 2). Self-tunes per-deployment via Azure's response

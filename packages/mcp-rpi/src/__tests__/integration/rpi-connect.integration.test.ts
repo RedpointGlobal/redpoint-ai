@@ -55,8 +55,9 @@ if (shouldSkip) {
 describe.skipIf(shouldSkip)("RPI integration (live)", () => {
   let authService: RPIAuthService;
   let apiClient: RPIApiClient;
+  let proxyToken: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     authService = new RPIAuthService(
       process.env.RPI_INTEGRATION_API_URL!,
       process.env.RPI_OAUTH_CLIENT_ID!,
@@ -69,6 +70,7 @@ describe.skipIf(shouldSkip)("RPI integration (live)", () => {
       authService,
       process.env.RPI_DEFAULT_CLIENT_ID!,
     );
+    proxyToken = await authService.getProxyToken();
   });
 
   it("resolves proxyEnabled=true from env", () => {
@@ -118,7 +120,7 @@ describe.skipIf(shouldSkip)("RPI integration (live)", () => {
     const { searchFileInfos } = await import("../../client/search.js");
     const result = await searchFileInfos<{ results?: unknown[] }>(
       apiClient,
-      undefined,
+      proxyToken,
       { fileTypes: ["Audience"], pageSize: 5 },
     );
     expect(Array.isArray(result?.results ?? [])).toBe(true);
@@ -131,7 +133,7 @@ describe.skipIf(shouldSkip)("RPI integration (live)", () => {
     const { searchFileInfos } = await import("../../client/search.js");
     const result = await searchFileInfos<{ results?: unknown[] }>(
       apiClient,
-      undefined,
+      proxyToken,
       { fileTypes: ["Audience"], pageSize: 5 },
       { clientId: process.env.RPI_DEFAULT_CLIENT_ID! },
     );

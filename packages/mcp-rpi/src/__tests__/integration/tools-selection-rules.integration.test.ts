@@ -55,8 +55,9 @@ if (shouldSkip) {
 
 describe.skipIf(shouldSkip)("Selection rules tool chain (live)", () => {
   let apiClient: RPIApiClient;
+  let proxyToken: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const authService = new RPIAuthService(
       process.env.RPI_INTEGRATION_API_URL!,
       process.env.RPI_OAUTH_CLIENT_ID!,
@@ -69,6 +70,7 @@ describe.skipIf(shouldSkip)("Selection rules tool chain (live)", () => {
       authService,
       process.env.RPI_DEFAULT_CLIENT_ID!,
     );
+    proxyToken = await authService.getProxyToken();
   });
 
   it("chained flow: list_selection_rules → inspect subTypeName → call the right detail tool", { timeout: 30_000 }, async () => {
@@ -78,7 +80,7 @@ describe.skipIf(shouldSkip)("Selection rules tool chain (live)", () => {
         name?: string | null;
         subTypeName?: string | null;
       }>;
-    }>(apiClient, undefined, {
+    }>(apiClient, proxyToken, {
       fileTypes: ["Selection Rule"],
       pageSize: 10,
     });
@@ -114,7 +116,7 @@ describe.skipIf(shouldSkip)("Selection rules tool chain (live)", () => {
         : "/client/files/standard-selection-rule";
 
     const detail = await apiClient.get<Record<string, unknown>>(
-      undefined,
+      proxyToken,
       detailPath,
       { ID: picked.id! },
     );
@@ -127,7 +129,7 @@ describe.skipIf(shouldSkip)("Selection rules tool chain (live)", () => {
 
   it("list_basic_selection_rule_document_definitions returns from the tenant-wide endpoint", { timeout: 30_000 }, async () => {
     const result = await apiClient.get<Record<string, unknown>>(
-      undefined,
+      proxyToken,
       "/client/files/document-database-decision/document-definitions",
     );
     expect(result).toBeDefined();
@@ -143,7 +145,7 @@ describe.skipIf(shouldSkip)("Selection rules tool chain (live)", () => {
   it("subType filter returns only Basic rules when subType=Basic", { timeout: 30_000 }, async () => {
     const result = await searchFileInfos<{
       results?: Array<{ subTypeName?: string | null }>;
-    }>(apiClient, undefined, {
+    }>(apiClient, proxyToken, {
       fileTypes: ["Selection Rule"],
       subTypes: ["Basic"],
       pageSize: 20,
@@ -164,7 +166,7 @@ describe.skipIf(shouldSkip)("Selection rules tool chain (live)", () => {
   it("subType filter returns only Standard rules when subType=Standard", { timeout: 30_000 }, async () => {
     const result = await searchFileInfos<{
       results?: Array<{ subTypeName?: string | null }>;
-    }>(apiClient, undefined, {
+    }>(apiClient, proxyToken, {
       fileTypes: ["Selection Rule"],
       subTypes: ["Standard"],
       pageSize: 20,
@@ -186,7 +188,7 @@ describe.skipIf(shouldSkip)("Selection rules tool chain (live)", () => {
     // Pull a larger page so we have a realistic chance of seeing both types
     const result = await searchFileInfos<{
       results?: Array<{ subTypeName?: string | null }>;
-    }>(apiClient, undefined, {
+    }>(apiClient, proxyToken, {
       fileTypes: ["Selection Rule"],
       pageSize: 50,
     });

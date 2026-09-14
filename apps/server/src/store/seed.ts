@@ -1,6 +1,14 @@
 import { db } from "./db.js";
 import { WORKSPACE_NAMES, LEGACY_WORKSPACE_NAMES } from "@redpoint-ai/shared";
-import { workspaces, threads, apiKeys, auditLogs } from "./schema.js";
+import {
+  workspaces,
+  threads,
+  conversationClients,
+  messages,
+  runs,
+  apiKeys,
+  auditLogs,
+} from "./schema.js";
 import { randomUUID } from "crypto";
 import { count, eq } from "drizzle-orm";
 import { existsSync } from "fs";
@@ -124,6 +132,21 @@ const DEFAULT_WORKSPACES = [
         "rpi-interactions",
         "rpi-selection-rules",
         "rpi-admin",
+        "rpi-health",
+        // #27634 adoption — generated read tools reach the orchestrator via new
+        // domain skills, adopted one at a time (each eval-gated). First: attributes.
+        "rpi-attributes",
+        "rpi-operations",
+        "rpi-databases",
+        "rpi-single-customer-view",
+        "rpi-integrations",
+        "rpi-decision-rules",
+        "rpi-analysis",
+        "rpi-content",
+        "rpi-workflows",
+        "rpi-users-permissions",
+        "rpi-cluster-users",
+        "rpi-cluster-infra",
       ],
       suggestions: [
         "Check my RPI connection...",
@@ -131,6 +154,13 @@ const DEFAULT_WORKSPACES = [
         "List my selection rules...",
         "List my audiences...",
         "List my interactions...",
+        // #27897 followup — the runs-dashboard pill. Lives in the WORKSPACE config
+        // (not only chat-panel's DEFAULT_SUGGESTIONS) because a configured
+        // workspace's config.suggestions OVERRIDES the hardcoded defaults, so a
+        // default-only pill vanishes once config loads. "daily" is the per-day
+        // signal (granularity:daily → stacked bar). Exact phrase matches
+        // DEFAULT_SUGGESTIONS + the routing eval scenario runs-dashboard-pill.
+        "Run daily interaction dashboard for last month...",
         "List my folders...",
       ],
     },
@@ -190,10 +220,45 @@ const DRH_WORKSPACE = {
 };
 
 /**
- * Lazy schema bootstrap. If the `workspaces` table doesn't exist yet (fresh
- * clone, never started before), spawn drizzle-kit push to apply the schema,
- * then proceed to seed default workspaces. drizzle-kit push is idempotent —
- * no-op if the schema is already current.
+ * Every table the app queries. The bootstrap probes ALL of these, not just
+ * `workspaces` — a persistent volume from an OLDER build has `workspaces` but
+ * lacks tables added since (e.g. `conversation_clients`). Gating the
+ * schema push on `workspaces` alone let such a volume skip the push forever, so
+ * the first chat hit `SQLiteError: no such table: conversation_clients` → 500.
+ * Probing the full set makes an upgraded volume self-heal on next boot.
+ */
+const EXPECTED_TABLES = [
+  workspaces,
+  threads,
+  conversationClients,
+  messages,
+  runs,
+  apiKeys,
+  auditLogs,
+] as const;
+
+/**
+ * True only if EVERY expected table exists. DB-agnostic (SQLite + Postgres): it
+ * probes each table with a trivial SELECT and treats a throw as "missing",
+ * rather than reading a dialect-specific catalog. A missing COLUMN on an
+ * existing table is out of scope — push covers new tables (the common upgrade
+ * shape); a column-only migration would still need a manual push.
+ */
+async function schemaIsComplete(): Promise<boolean> {
+  for (const table of EXPECTED_TABLES) {
+    try {
+      await db.select().from(table).limit(1);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Apply the schema via drizzle-kit push (idempotent — creates missing tables,
+ * no-op when current). Spawned in-process so the server "just works" on a fresh
+ * clone AND on a volume upgraded from an older build.
  */
 function bootstrapSchemaIfMissing(): void {
   const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -216,17 +281,18 @@ function bootstrapSchemaIfMissing(): void {
 }
 
 export async function seedDefaults(): Promise<void> {
-  // Server "just works" on first start: if the workspaces table is missing,
-  // bootstrap the schema in-process via drizzle-kit push, then seed defaults.
-  let total: number;
-  try {
-    const result = await db.select({ total: count() }).from(workspaces);
-    total = result[0].total;
-  } catch {
+  // Server "just works" on first start AND after a version upgrade: if ANY
+  // expected table is missing — a fresh DB, or a persistent volume from an older
+  // build that lacks tables added since — bootstrap the schema in-process via
+  // drizzle-kit push, then seed defaults. The probe covers the full table set
+  // (not just `workspaces`) so an upgraded volume self-heals; the push is purely
+  // additive here (creates the missing tables, never drops/alters existing ones),
+  // so a rep's existing data survives the self-heal.
+  if (!(await schemaIsComplete())) {
     bootstrapSchemaIfMissing();
-    const result = await db.select({ total: count() }).from(workspaces);
-    total = result[0].total;
   }
+  const result = await db.select({ total: count() }).from(workspaces);
+  const total = result[0].total;
   // Bring legacy names up to the product names before anything keys off them.
   await renameLegacyWorkspaces();
   await enforceRpiWorkspaceConfig();

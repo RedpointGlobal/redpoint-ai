@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { RPIApiClient } from "../client/rpi-api.js";
 import type { components } from "../client/rpi-types.js";
 import { createToolRegistrar } from "../tool-categories.js";
+import { targetUrlOf } from "./generated-shared.js";
 import { searchFileInfos, enrichMatchesWithFullPath } from "../client/search.js";
 import { pollUntilTerminal } from "../client/polling.js";
 import { mapResultsToCards, stripNestedFields } from "./response-shapes.js";
@@ -151,6 +152,7 @@ export function registerAudienceTools(
   registerTool(
     "list_audiences",
     {
+      _meta: { endpoints: ["/client/file-system/search-file-infos"] },
       title: "List Audiences",
       description:
         "Search audiences in the RPI instance. Uses POST /client/file-system/search-file-infos with fileTypeFilters=[\"Audience\"]. Returns a card view `{id, name, description, parentFolderName}` per item by default; pass `verbose: true` to get the full RPI response. Supports server-side pagination and name filtering.",
@@ -188,7 +190,7 @@ export function registerAudienceTools(
             pageSize,
             folderId,
           },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const shaped = verbose
           ? raw
@@ -203,6 +205,7 @@ export function registerAudienceTools(
   registerTool(
     "get_audience_by_id",
     {
+      _meta: { endpoints: ["/client/files/audience"] },
       title: "Get Audience by ID",
       description:
         "Fetch a single audience's full detail by its RPI ID via GET /client/files/audience.",
@@ -225,7 +228,7 @@ export function registerAudienceTools(
           userToken,
           "/client/files/audience",
           { ID: audienceId },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent(result);
       } catch (error) {
@@ -237,6 +240,7 @@ export function registerAudienceTools(
   registerTool(
     "get_audience_by_name",
     {
+      _meta: { endpoints: ["/client/file-system/search-file-infos"] },
       title: "Get Audience by Name",
       description:
         "Find audiences by exact (case-insensitive) name. Uses POST /client/file-system/search-file-infos. Returns `{found: false, name}` when no match, or `{found: true, matches: [...]}` when 1+ — `matches` is always an array (length 1 is common; 2+ means the same name exists in multiple folders, surface `fullPath` (the full folder path, resolved per match) and ask the user to pick). Each match carries `fullPath` and `parentFolderName`; call get_audience_by_id with `matches[i].id` for full detail.",
@@ -269,7 +273,7 @@ export function registerAudienceTools(
             pageSize: 255,
             folderId,
           },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const results = (search.results ?? []) as Array<{
           id?: string | null;
@@ -283,7 +287,7 @@ export function registerAudienceTools(
           rpiClient,
           userToken,
           matches,
-          { clientId, verbose: true },
+          { clientId, verbose: true, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent({ found: true, matches: enriched });
       } catch (error) {
@@ -295,6 +299,7 @@ export function registerAudienceTools(
   registerTool(
     "get_audience_metadata",
     {
+      _meta: { endpoints: ["/client/files/audience/metadata"] },
       title: "Get Audience Metadata",
       description:
         "Fetch the metadata configuration for an audience by its RPI ID via GET /client/files/audience/metadata.",
@@ -317,7 +322,7 @@ export function registerAudienceTools(
           userToken,
           "/client/files/audience/metadata",
           { ID: audienceId },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent(result);
       } catch (error) {
@@ -333,6 +338,7 @@ export function registerAudienceTools(
   registerTool(
     "list_audience_definitions",
     {
+      _meta: { endpoints: ["/client/configuration/audience-definitions"] },
       title: "List Audience Definitions",
       description:
         "List audience definitions (data-structure templates). RPI's configuration endpoint returns the full set on every call; this tool filters by name and paginates client-side. Returns a card view `{id, name, description}` per item by default; pass `verbose: true` to get the full audience-definition records (including oversize fields like offerHistoryAttributes, metadata.items, trainingSets).",
@@ -360,7 +366,7 @@ export function registerAudienceTools(
           userToken,
           "/client/configuration/audience-definitions",
           undefined,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const items = ((all?.objects ?? []) as unknown) as Array<{
           id?: string | null;
@@ -388,6 +394,7 @@ export function registerAudienceTools(
   registerTool(
     "get_audience_definition_by_id",
     {
+      _meta: { endpoints: ["/client/configuration/audience-definitions"] },
       title: "Get Audience Definition by ID",
       description:
         "Find a single audience definition by its RPI ID (case-insensitive equals). Fetches the full list and matches client-side — RPI's configuration endpoint has no by-id query. By default, strips oversize fields (offerHistoryAttributes, trainingSets, metadata.items) for token efficiency. Pass `verbose: true` to include them.",
@@ -413,7 +420,7 @@ export function registerAudienceTools(
           userToken,
           "/client/configuration/audience-definitions",
           undefined,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const items = ((all?.objects ?? []) as unknown) as Array<{
           id?: string | null;
@@ -457,6 +464,7 @@ export function registerAudienceTools(
   registerTool(
     "run_audience_test_workflow",
     {
+      _meta: { endpoints: ["/client/workflows/audiences/activate-workflow-association-test"] },
       title: "Run Audience Test Workflow",
       description:
         "Start an audience's test workflow, poll the activity status until it terminates, then fetch the block instance results (record counts per block). Combines POST /client/workflows/audiences/activate-workflow-association-test → poll GET /client/workflows/audiences/activity/status → GET /client/workflows/audiences/blocks-instance-results. Returns `{workflowAssociationID, workflowAssociationInstanceID, activityID, status, blockResults}`. Port of the Java `audienceExecuteWorkflowAndWait` tool.",
@@ -492,7 +500,7 @@ export function registerAudienceTools(
           isSandBox !== undefined
             ? { id: audienceId, isSandBox }
             : { id: audienceId },
-          { clientId, verbose: true },
+          { clientId, verbose: true, baseUrl: targetUrlOf(extra) },
         );
         const waID = workflowInfo.workflowAssociationID;
         const waInstanceID = workflowInfo.workflowAssociationInstanceID;
@@ -515,7 +523,7 @@ export function registerAudienceTools(
                 WorkflowAssociationInstanceID: String(waInstanceID),
                 ActivityID: waID,
               },
-              { clientId, verbose: true },
+              { clientId, verbose: true, baseUrl: targetUrlOf(extra) },
             ),
           {
             intervalMs: 1000,
@@ -546,7 +554,7 @@ export function registerAudienceTools(
               ActivityID: activityID,
               WorkflowAssociationInstanceID: String(waInstanceID),
             },
-            { clientId, verbose },
+            { clientId, verbose, baseUrl: targetUrlOf(extra) },
           );
 
         return jsonContent({
@@ -565,6 +573,7 @@ export function registerAudienceTools(
   registerTool(
     "get_audience_workflow_activity_status",
     {
+      _meta: { endpoints: ["/client/workflows/audiences/activity/status"] },
       title: "Get Audience Workflow Activity Status",
       description:
         "One-shot status check for an audience workflow activity. GET /client/workflows/audiences/activity/status. Useful for custom polling or inspecting an already-running workflow without waiting for it.",
@@ -601,7 +610,7 @@ export function registerAudienceTools(
           userToken,
           "/client/workflows/audiences/activity/status",
           params,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent(result);
       } catch (error) {
@@ -616,6 +625,7 @@ export function registerAudienceTools(
   registerTool(
     "get_audience_workflow_block_results",
     {
+      _meta: { endpoints: ["/client/workflows/audiences/blocks-instance-results"] },
       title: "Get Audience Workflow Block Results",
       description:
         "Fetch detailed block instance results for an audience workflow run. GET /client/workflows/audiences/blocks-instance-results. Returns record counts per block in the dataflow.",
@@ -653,7 +663,7 @@ export function registerAudienceTools(
             ActivityID: activityId,
             WorkflowAssociationInstanceID: String(workflowAssociationInstanceId),
           },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent(result);
       } catch (error) {
@@ -668,6 +678,7 @@ export function registerAudienceTools(
   registerTool(
     "get_audience_workflow_results",
     {
+      _meta: { endpoints: ["/client/workflows/audiences/results"] },
       title: "Get Audience Workflow Results",
       description:
         "Fetch comprehensive audience workflow results — optionally including the dataflow template XML, the status summary, and the activity results. POST /client/workflows/audiences/results (this is a POST with query parameters, not a JSON body).",
@@ -737,7 +748,7 @@ export function registerAudienceTools(
           userToken,
           "/client/workflows/audiences/results",
           undefined,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
           params,
         );
         return jsonContent(result);
@@ -750,6 +761,7 @@ export function registerAudienceTools(
   registerTool(
     "list_audience_test_instances",
     {
+      _meta: { endpoints: ["/client/workflows/audiences/test-instances"] },
       title: "List Audience Test Instances",
       description:
         "List the historical test workflow instances for an audience. GET /client/workflows/audiences/test-instances. Each entry corresponds to a past run of the audience's test workflow.",
@@ -772,7 +784,7 @@ export function registerAudienceTools(
           userToken,
           "/client/workflows/audiences/test-instances",
           { ID: audienceId },
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         return jsonContent(result);
       } catch (error) {
@@ -784,6 +796,7 @@ export function registerAudienceTools(
   registerTool(
     "get_audience_execution_results",
     {
+      _meta: { endpoints: ["/client/workflows/audiences/execution-results"] },
       title: "Get Audience Execution Results",
       description:
         "Fetch historical execution results for an audience, with optional date range and scope filters. POST /client/workflows/audiences/execution-results (POST with query parameters — no JSON body). Use `workflowAssociationInstanceId` to scope to a specific past run.",
@@ -881,7 +894,7 @@ export function registerAudienceTools(
           userToken,
           "/client/workflows/audiences/execution-results",
           undefined,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
           params,
         );
         return jsonContent(result);
@@ -894,6 +907,7 @@ export function registerAudienceTools(
   registerTool(
     "get_audience_definition_by_name",
     {
+      _meta: { endpoints: ["/client/configuration/audience-definitions"] },
       title: "Get Audience Definition by Name",
       description:
         "Find a single audience definition by its exact (case-insensitive) name. Fetches the full list and matches client-side. By default, strips oversize fields (offerHistoryAttributes, trainingSets, metadata.items) for token efficiency. Pass `verbose: true` to include them.",
@@ -919,7 +933,7 @@ export function registerAudienceTools(
           userToken,
           "/client/configuration/audience-definitions",
           undefined,
-          { clientId, verbose },
+          { clientId, verbose, baseUrl: targetUrlOf(extra) },
         );
         const items = ((all?.objects ?? []) as unknown) as Array<{
           id?: string | null;

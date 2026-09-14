@@ -148,27 +148,45 @@ describe("tools/list filtering via live server", () => {
     );
   }
 
-  // 47 tools are registered; 5 writes are gated (disabled) at construction, so
-  // tools/list — which the SDK filters on `enabled` — exposes 42. The explicit
-  // gate checks (absent from list + rejected on call) live in
+  // 46 hand tools + 153 generated (#27634 complete: 185 in-scope GETs = 153
+  // authored + 29 hand-covered + 3 suppressed functional-dups) = 199 registered
+  // (list_interaction_runs removed, #27897 — its endpoint was unusable);
+  // 5 hand writes are gated at construction, so tools/list — which the SDK filters
+  // on `enabled` — exposes 197 (44 hand reads + 153 generated). The mask is a no-op
+  // here (harness passes no instanceEndpoints). Explicit gate checks live in
   // write-enforcement.test.ts.
-  it("returns 42 enabled tools with no filter (5 write tools gated)", async () => {
+  it("returns 197 enabled tools with no filter (5 write tools gated; +153 generated)", async () => {
     const result = await callToolsList();
-    expect(result.tools.length).toBe(42);
+    expect(result.tools.length).toBe(197);
   });
 
-  it("returns 1 file-system tool when category=file-system", async () => {
+  it("returns 7 file-system tools when category=file-system (1 hand + 6 generated)", async () => {
     const result = await callToolsList({ category: "file-system" });
-    expect(result.tools.length).toBe(1);
+    expect(result.tools.length).toBe(7);
     const names = result.tools.map((t) => t.name).sort();
-    expect(names).toEqual(["get_file_info_by_id"]);
+    expect(names).toEqual([
+      "get_file_dependencies",
+      "get_file_dependents",
+      "get_file_history",
+      "get_file_info_by_id",
+      "get_file_metadata",
+      "list_file_info_attribute_lists",
+      "search_external_folder_connectors",
+    ]);
   });
 
-  it("returns 1 folder tool when category=folders (create_folder gated)", async () => {
+  it("returns 6 folder tools when category=folders (create_folder gated; 1 hand + 5 generated)", async () => {
     const result = await callToolsList({ category: "folders" });
-    expect(result.tools.length).toBe(1);
+    expect(result.tools.length).toBe(6);
     const names = result.tools.map((t) => t.name).sort();
-    expect(names).toEqual(["list_folders"]);
+    expect(names).toEqual([
+      "get_folder_by_full_path",
+      "get_folder_permissions",
+      "get_folder_permissions_by_full_path",
+      "get_user_private_folder",
+      "list_folder_content",
+      "list_folders",
+    ]);
   });
 
   it("returns 8 selection rule tools when category=selection-rules", async () => {
@@ -187,9 +205,9 @@ describe("tools/list filtering via live server", () => {
     ]);
   });
 
-  it("returns 13 interaction tools when category=interactions (3 writes gated)", async () => {
+  it("returns 14 interaction tools when category=interactions (3 writes gated)", async () => {
     const result = await callToolsList({ category: "interactions" });
-    expect(result.tools.length).toBe(13);
+    expect(result.tools.length).toBe(15);
     const names = result.tools.map((t) => t.name).sort();
     // activate_interaction_workflow, control_workflow_instance, and
     // run_interaction_workflow are gated writes — absent here.
@@ -200,6 +218,7 @@ describe("tools/list filtering via live server", () => {
       "get_interaction_by_id",
       "get_interaction_by_name",
       "get_interaction_default_metadata",
+      "get_interaction_run_counts",
       "get_interaction_trigger",
       "get_interaction_workflow_activities",
       "get_interaction_workflow_instances",
@@ -207,6 +226,7 @@ describe("tools/list filtering via live server", () => {
       "get_interactions_workflow_status",
       "get_workflow_instance_summary",
       "list_interactions",
+      "summarize_interaction_runs",
     ]);
   });
 
@@ -255,6 +275,40 @@ describe("tools/list filtering via live server", () => {
     }
   });
 
+  // -------------------------------------------------------------------------
+  // LOAD-BEARING TOOL-PRESENCE GUARD (#27957 regen fallout).
+  // get_user_client_list was silently DROPPED when the 7.8 regen's
+  // deriveHandEndpoints treated verify_connection's _meta.endpoints probe of
+  // /authentication/user-client-list as hand-coverage and suppressed the overlay
+  // tool. Nothing pinned it, so the drop was invisible until a live flow broke.
+  // These guards make any future _meta/overlay change that removes a tool the
+  // skills/routing layer depends on FAIL HERE, not in production. Add to
+  // LOAD_BEARING when a skill's mcpToolFilter or a routing path starts depending
+  // on a tool whose loss would be silent.
+  // -------------------------------------------------------------------------
+  const LOAD_BEARING = [
+    // foundation-expert tenant steering (#27828) lists accessible tenants with
+    // this; rpi-admin exposes it. THE tool the regen dropped.
+    "get_user_client_list",
+    "verify_connection", // THE connection/auth check
+    "list_clients", // core client list (rpi-clients)
+    "list_interactions", // rpi-interactions core
+    "summarize_interaction_runs", // run summary (#27897)
+    "get_interaction_run_counts", // run-counts over time (#27957)
+    "list_audiences", // rpi-audiences core
+  ];
+
+  it("exposes every load-bearing tool the skills/routing layer depends on", async () => {
+    const present = new Set((await callToolsList()).tools.map((t) => t.name));
+    const missing = LOAD_BEARING.filter((n) => !present.has(n));
+    expect(missing).toEqual([]);
+  });
+
+  it("get_user_client_list is present (regen-drop regression, #27957)", async () => {
+    const present = new Set((await callToolsList()).tools.map((t) => t.name));
+    expect(present.has("get_user_client_list")).toBe(true);
+  });
+
   it("advertises Java-compatible category discovery capabilities on the server", () => {
     // The McpServer stashes registered capabilities on the low-level Server
     // instance as `_capabilities`. The v3 and RP_AI extractors both read
@@ -277,10 +331,13 @@ describe("tools/list filtering via live server", () => {
       estimatedToolCount: number;
     }>;
     expect(Array.isArray(categories)).toBe(true);
-    expect(categories.length).toBe(8); // audiences, admin, auth, clients, file-system, folders, interactions, selection-rules
+    // 8 hand categories + 10 #27634 generated-tool categories (configuration,
+    // files, cluster, data-connectors, workflows, operations, data-import,
+    // content-preview, jobs, smart-assets) = 18.
+    expect(categories.length).toBe(18);
 
     const fileSystem = categories.find((c) => c.name === "file-system");
-    expect(fileSystem!.estimatedToolCount).toBe(1);
+    expect(fileSystem!.estimatedToolCount).toBe(7);
 
     // estimatedToolCount reflects ENABLED tools — the gate runs before
     // installToolFilter counts them, so gated writes are excluded.
@@ -293,7 +350,7 @@ describe("tools/list filtering via live server", () => {
     expect(admin!.estimatedToolCount).toBe(3);
 
     const interactions = categories.find((c) => c.name === "interactions");
-    expect(interactions!.estimatedToolCount).toBe(13); // 16 registered − 3 gated writes
+    expect(interactions!.estimatedToolCount).toBe(15); // 18 registered − 3 gated writes
 
     const filterParameter = listTools!.filterParameter as {
       name: string;

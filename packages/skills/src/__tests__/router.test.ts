@@ -57,6 +57,16 @@ const actionSkill = makeSkill({
   mcpToolFilter: ["email_send"],
 });
 
+// A skill that opts into date grounding (#27897) — only these get the date preamble.
+const dateSkill = makeSkill({
+  name: "runs-report",
+  type: "action",
+  title: "Runs Report",
+  description: "Runs dashboards that do relative-date math.",
+  mcpToolFilter: ["summarize_interaction_runs"],
+  dateGrounding: true,
+});
+
 // Fake model — we never actually call it because generateText is mocked.
 const fakeModel = {} as any;
 
@@ -72,6 +82,7 @@ describe("createSkillRouterTool", () => {
     registry = new SkillRegistry();
     registry.register(expertSkill);
     registry.register(actionSkill);
+    registry.register(dateSkill);
     getToolsForSkill = mock(() => Promise.resolve({}));
     mockGenerateText.mockClear();
   });
@@ -138,8 +149,35 @@ describe("createSkillRouterTool", () => {
     );
     const system = (mockGenerateText.mock.calls[0]![0] as { system: string })
       .system;
+    // An unflagged action skill's system is its own instructions — no grounding
+    // preamble, and (see below) no date preamble either.
     expect(system).toBe(actionSkill.instructions);
     expect(system).not.toContain(GROUNDING_PREAMBLE);
+  });
+
+  it("prepends the current date ONLY to dateGrounding skills (#27897 targeted fix)", async () => {
+    const tool = createSkillRouterTool(registry, fakeModel, getToolsForSkill);
+    await tool.execute!(
+      { skillName: "runs-report", input: "runs dashboard for last 30 days" },
+      { toolCallId: "g-date-on", messages: [], abortSignal: undefined as any },
+    );
+    const system = (mockGenerateText.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain("Current date:");
+    expect(system).toMatch(/current date:.*\(UTC\)/i);
+    // Date leads, before the skill body.
+    expect(system.indexOf("Current date:")).toBeLessThan(system.indexOf(dateSkill.instructions));
+  });
+
+  it("does NOT prepend the date to a skill without dateGrounding (rpi-admin-style — guards the list-clients flip)", async () => {
+    const tool = createSkillRouterTool(registry, fakeModel, getToolsForSkill);
+    await tool.execute!(
+      { skillName: "send-email", input: "Send a message" },
+      { toolCallId: "g-date-off", messages: [], abortSignal: undefined as any },
+    );
+    const system = (mockGenerateText.mock.calls[0]![0] as { system: string }).system;
+    // The blanket date-preamble tipped a borderline rpi-admin tool pick; unflagged
+    // skills must get NO date so that regression can't return.
+    expect(system).not.toContain("Current date:");
   });
 
   it("calls getToolsForSkill with correct filter for action skills", async () => {

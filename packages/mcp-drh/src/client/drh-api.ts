@@ -15,6 +15,7 @@
  * Structure mirrors packages/mcp-rpi/src/client/rpi-api.ts (intentional copy).
  */
 import type { DRHAuthService } from "./drh-auth.js";
+import { safeErrorDetail } from "./http-error.js";
 
 export interface DRHRequestOptions {
   /** X-ClientId override; falls back to the server default. */
@@ -117,14 +118,8 @@ export class DRHApiClient {
     raw?: boolean,
   ): Promise<T> {
     if (!res.ok) {
-      let detail = "";
-      try {
-        detail = await res.text();
-      } catch {
-        /* ignore */
-      }
       throw new Error(
-        `DRH ${method} ${path} failed: ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}`,
+        `DRH ${method} ${path} failed: ${safeErrorDetail(res.status, res.statusText)}`,
       );
     }
     if (raw) return (await res.text()) as unknown as T;

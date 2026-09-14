@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { RPIApiClient } from "../client/rpi-api.js";
 import type { components } from "../client/rpi-types.js";
 import { createToolRegistrar } from "../tool-categories.js";
+import { targetUrlOf } from "./generated-shared.js";
 import { folderCache, FolderCache, type FolderNode } from "../client/folder-cache.js";
 
 type FolderItem = components["schemas"]["FolderStorageItemJsonResponseMessage"];
@@ -62,12 +63,13 @@ async function walkFolderTree(
   rpiClient: RPIApiClient,
   userToken: string | undefined,
   clientId: string | undefined,
+  baseUrl: string | undefined,
 ): Promise<{ nodes: FolderNode[]; raw: FolderItem[] }> {
   const rootResp = await rpiClient.get<FolderItems>(
     userToken,
     "/client/file-system/folders/root-folders",
     undefined,
-    { clientId, verbose: true },
+    { clientId, verbose: true, baseUrl },
   );
   const rootFolders = rootResp.folders ?? [];
 
@@ -82,7 +84,7 @@ async function walkFolderTree(
       userToken,
       "/client/file-system/folders/subfolders",
       { ID: next.id },
-      { clientId, verbose: true },
+      { clientId, verbose: true, baseUrl },
     );
     const subs = subResp.folders ?? [];
     for (const sub of subs) {
@@ -104,6 +106,7 @@ export function registerFolderTools(
   registerTool(
     "list_folders",
     {
+      _meta: { endpoints: ["/client/file-system/folders/root-folders", "/client/file-system/folders/subfolders"] },
       title: "List Folders",
       description:
         "List all folders in the RPI tenant by walking root + subfolders recursively. Returns flat nodes `{id, name, fullPath, parentFolderId}` by default; pass `verbose: true` for full RPI folder records. Optional case-insensitive substring `nameFilter`. Results are cached in-memory per (user, client) for 5 minutes.",
@@ -131,7 +134,7 @@ export function registerFolderTools(
 
       try {
         if (verbose) {
-          const { raw } = await walkFolderTree(rpiClient, userToken, clientId);
+          const { raw } = await walkFolderTree(rpiClient, userToken, clientId, targetUrlOf(extra));
           const filtered = nameFilter
             ? raw.filter((f) =>
                 (f.name ?? "").toLowerCase().includes(nameFilter.toLowerCase()),
@@ -142,7 +145,7 @@ export function registerFolderTools(
 
         let nodes = folderCache.get(cacheKey);
         if (!nodes) {
-          const walked = await walkFolderTree(rpiClient, userToken, clientId);
+          const walked = await walkFolderTree(rpiClient, userToken, clientId, targetUrlOf(extra));
           nodes = walked.nodes;
           folderCache.set(cacheKey, nodes);
         }
@@ -161,6 +164,7 @@ export function registerFolderTools(
   registerTool(
     "create_folder",
     {
+      _meta: { endpoints: ["/client/file-system/folder"] },
       title: "Create Folder",
       description:
         "Create a new folder in the RPI tenant via POST /client/file-system/folder. `parentFolderId` is optional — omit to create at the root. Invalidates the user's cached folder tree on success.",
@@ -200,7 +204,7 @@ export function registerFolderTools(
           userToken,
           "/client/file-system/folder",
           body,
-          { clientId, verbose: true },
+          { clientId, verbose: true, baseUrl: targetUrlOf(extra) },
         );
 
         folderCache.invalidate(`${FolderCache.fingerprint(userToken)}:`);

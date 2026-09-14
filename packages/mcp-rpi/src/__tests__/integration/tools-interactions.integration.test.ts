@@ -59,8 +59,9 @@ if (shouldSkip) {
 
 describe.skipIf(shouldSkip)("Interactions tool chain (live)", () => {
   let apiClient: RPIApiClient;
+  let proxyToken: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const authService = new RPIAuthService(
       process.env.RPI_INTEGRATION_API_URL!,
       process.env.RPI_OAUTH_CLIENT_ID!,
@@ -73,13 +74,14 @@ describe.skipIf(shouldSkip)("Interactions tool chain (live)", () => {
       authService,
       process.env.RPI_DEFAULT_CLIENT_ID!,
     );
+    proxyToken = await authService.getProxyToken();
   });
 
   it("chained interactions flow: list → get_by_id → get_by_name → workflows", async () => {
     // 1. List interactions
     const listResult = await searchFileInfos<{
       results?: Array<{ id?: string | null; name?: string | null }>;
-    }>(apiClient, undefined, {
+    }>(apiClient, proxyToken, {
       fileTypes: ["Interaction"],
       pageSize: 5,
     });
@@ -107,7 +109,7 @@ describe.skipIf(shouldSkip)("Interactions tool chain (live)", () => {
 
     // 2. get_interaction_by_id — just verify it returns an object
     const byId = await apiClient.get<Record<string, unknown>>(
-      undefined,
+      proxyToken,
       "/client/files/interaction",
       { ID: picked.id! },
     );
@@ -117,7 +119,7 @@ describe.skipIf(shouldSkip)("Interactions tool chain (live)", () => {
     // 3. get_interaction_by_name (exact CI match via search)
     const searchByName = await searchFileInfos<{
       results?: Array<{ id?: string | null; name?: string | null }>;
-    }>(apiClient, undefined, {
+    }>(apiClient, proxyToken, {
       fileTypes: ["Interaction"],
       searchString: picked.name!,
       pageSize: 255,
@@ -131,7 +133,7 @@ describe.skipIf(shouldSkip)("Interactions tool chain (live)", () => {
 
     // 4. get_interaction_workflows
     const workflowsResult = await apiClient.get<Record<string, unknown>>(
-      undefined,
+      proxyToken,
       "/client/files/interaction/workflows",
       { ID: picked.id! },
     );
@@ -145,7 +147,7 @@ describe.skipIf(shouldSkip)("Interactions tool chain (live)", () => {
     // Pick an interaction
     const listResult = await searchFileInfos<{
       results?: Array<{ id?: string | null; name?: string | null }>;
-    }>(apiClient, undefined, {
+    }>(apiClient, proxyToken, {
       fileTypes: ["Interaction"],
       pageSize: 10,
     });
@@ -166,7 +168,7 @@ describe.skipIf(shouldSkip)("Interactions tool chain (live)", () => {
         workflowID?: string | null;
       }>;
     } & Record<string, unknown>>(
-      undefined,
+      proxyToken,
       "/client/files/interaction/workflows",
       { ID: picked.id! },
     );
@@ -204,7 +206,7 @@ describe.skipIf(shouldSkip)("Interactions tool chain (live)", () => {
 
     // get_interaction_workflow_activities
     const activities = await apiClient.get<Record<string, unknown>>(
-      undefined,
+      proxyToken,
       "/client/files/interaction/workflow/activities",
       {
         InteractionID: picked.id!,

@@ -23,12 +23,16 @@ if (existsSync(rootEnv)) {
 }
 
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { cors } from "hono/cors";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createRPIMcpServer } from "./server.js";
+import { fetchInstanceSpec } from "./client/spec-fetch.js";
+import { compareVersion, BUILT_AGAINST_API_VERSION, type VersionStatus } from "./client/version-check.js";
 import { RPIConfigSchema, resolveProxyEnabled } from "./config.js";
 import { RPIAuthService } from "./client/rpi-auth.js";
 import { createRpiAuthMiddleware } from "./middleware/auth.js";
+import { buildProtectedResourceMetadata } from "./oauth-metadata.js";
 import { discoverOidcConfig, createOidcVerifier } from "./client/oidc-discovery.js";
 import type { OidcVerifier } from "./client/oidc-discovery.js";
 
@@ -44,6 +48,8 @@ if (!process.env.RPI_OAUTH_CLIENT_ID) missingRpiVars.push("RPI_OAUTH_CLIENT_ID")
 if (!process.env.RPI_OAUTH_CLIENT_SECRET) missingRpiVars.push("RPI_OAUTH_CLIENT_SECRET");
 if (!process.env.RPI_DEFAULT_CLIENT_ID) missingRpiVars.push("RPI_DEFAULT_CLIENT_ID");
 
+// Secure-by-default: auth is required unless AUTH_REQUIRED is explicitly "false"
+// (an UNSET value → required). Matches apps/server's gate + boot guard.
 const authRequired = process.env.AUTH_REQUIRED !== "false";
 
 interface NormalSetup {
@@ -51,6 +57,23 @@ interface NormalSetup {
   config: ReturnType<typeof RPIConfigSchema.parse>;
   authService: RPIAuthService;
   oidcVerifier: OidcVerifier | null;
+  // Discovered OIDC issuer (the authorization server advertised in the RFC 9728
+  // Protected Resource Metadata for MCP OAuth clients). null when no OpenID
+  // provider is configured → discovery endpoints 404.
+  oidcIssuer: string | null;
+  // #27634 runtime mask. instanceEndpoints = the running instance's served,
+  // normalized endpoint-set (null = spec unreachable → fail-open, no mask).
+  // maskStatus is the operator-visible health (a SOFT note — never DegradedSetup,
+  // which 503s /mcp); maskedCount is filled on the first session's factory call.
+  instanceEndpoints: Set<string> | null;
+  maskStatus: "applied" | "unreachable";
+  maskedCount: number | null;
+  // Coarse MAJOR.MINOR version gate (from the same swagger fetch's info.version).
+  // A SOFT note like maskStatus — "mismatch" warns but never 503s / never degrades.
+  // "unknown" = version absent/unparseable (fail-open). instanceVersion is the raw
+  // string for the diagnostic.
+  versionStatus: VersionStatus;
+  instanceVersion: string | null;
 }
 interface DegradedSetup {
   degraded: true;
@@ -101,10 +124,12 @@ if (missingRpiVars.length > 0) {
       config.proxyPass,
     );
     let oidcVerifier: OidcVerifier | null = null;
+    let oidcIssuer: string | null = null;
     if (authRequired) {
       const oidcConfig = await discoverOidcConfig(authService);
       if (oidcConfig) {
         oidcVerifier = createOidcVerifier(oidcConfig);
+        oidcIssuer = oidcConfig.issuer;
         console.error(`OIDC verification enabled (issuer: ${oidcConfig.issuer})`);
       } else {
         console.error(
@@ -112,12 +137,66 @@ if (missingRpiVars.length > 0) {
         );
       }
     }
-    setup = { degraded: false, config, authService, oidcVerifier };
+    // #27634: fetch the instance's OpenAPI spec ONCE at boot. From that single
+    // fetch we derive BOTH the endpoint mask AND the coarse version gate. Fail-open
+    // — each signal is independently null on error; tools stay up regardless (soft
+    // maskStatus/versionStatus, NOT DegradedSetup).
+    const spec = await fetchInstanceSpec(config.integrationApiUrl);
+    const instanceEndpoints = spec.endpoints;
+    const maskStatus = instanceEndpoints ? "applied" : "unreachable";
+    console.error(
+      instanceEndpoints
+        ? `[mcp-rpi] endpoint mask: instance spec loaded (${instanceEndpoints.size} served paths)`
+        : `[mcp-rpi] endpoint mask: instance spec unreachable — failing open (full tool superset)`,
+    );
+    // Coarse MAJOR.MINOR version gate from the same swagger's info.version. Mismatch
+    // WARNS (the tool surface may drift) but never blocks boot — consistent with the
+    // fail-open mask and the same-version support boundary.
+    const versionStatus = compareVersion(spec.version);
+    if (versionStatus === "mismatch") {
+      console.warn(
+        `[mcp-rpi] API version mismatch: instance ${spec.version} vs built-against ${BUILT_AGAINST_API_VERSION}.x — tool surface may drift; failing open. Same-version instances only are supported on one server.`,
+      );
+    } else {
+      console.error(
+        `[mcp-rpi] API version: instance ${spec.version ?? "unknown"} (${versionStatus} vs built-against ${BUILT_AGAINST_API_VERSION}.x)`,
+      );
+    }
+    setup = {
+      degraded: false,
+      config,
+      authService,
+      oidcVerifier,
+      oidcIssuer,
+      instanceEndpoints,
+      maskStatus,
+      maskedCount: null,
+      versionStatus,
+      instanceVersion: spec.version,
+    };
   }
 }
 
 const app = new Hono();
-app.use("/*", cors());
+// Permissive CORS + CRITICAL: expose WWW-Authenticate so browser MCP clients
+// (e.g. claude.ai) can read the OAuth challenge off a 401 — without exposing it
+// cross-origin, spec-correct discovery silently fails (the #1 browser gotcha).
+// hono/cors also answers the OPTIONS preflight. Bearer-in-header auth needs no
+// credentials, so `origin: "*"` is correct here.
+app.use(
+  "/*",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "POST", "OPTIONS", "DELETE"],
+    allowHeaders: [
+      "Authorization",
+      "Content-Type",
+      "mcp-session-id",
+      "mcp-protocol-version",
+    ],
+    exposeHeaders: ["WWW-Authenticate", "mcp-session-id"],
+  }),
+);
 
 app.get("/health", (c) =>
   c.json(
@@ -130,9 +209,38 @@ app.get("/health", (c) =>
           reason: setup.reason,
           missing: setup.missing,
         }
-      : { status: "ok", server: "rpi-mcp-server", transport: "http" },
+      : {
+          status: "ok",
+          server: "rpi-mcp-server",
+          transport: "http",
+          mask: { status: setup.maskStatus, maskedCount: setup.maskedCount },
+          version: {
+            status: setup.versionStatus,
+            instance: setup.instanceVersion,
+            builtAgainst: BUILT_AGAINST_API_VERSION,
+          },
+        },
   ),
 );
+
+// The authorization server for MCP OAuth discovery (Mechanism A) — the OIDC
+// issuer discovered at boot. null in degraded mode or when no OpenID provider
+// is configured, which makes the discovery endpoints 404 (no AS to advertise).
+const oidcIssuer = setup.degraded ? null : setup.oidcIssuer;
+
+// RFC 9728 Protected Resource Metadata — served UNAUTHENTICATED so an external
+// MCP client hitting a 401 can discover the authorization server. Path-inserted
+// for the /mcp resource (§3.1) plus the root path. Only real when an OIDC
+// provider was discovered; otherwise 404 (auth=false / static-Bearer / no OIDC
+// are unaffected). SOFT-AUD by design — see oauth-metadata.ts.
+const servePrm = (c: Context) => {
+  if (!oidcIssuer) {
+    return c.json({ error: "OAuth protected-resource metadata not available" }, 404);
+  }
+  return c.json(buildProtectedResourceMetadata(c.req, oidcIssuer));
+};
+app.get("/.well-known/oauth-protected-resource", servePrm);
+app.get("/.well-known/oauth-protected-resource/mcp", servePrm);
 
 if (setup.degraded) {
   // Degraded /mcp: every request gets a structured JSON-RPC error with HTTP
@@ -165,8 +273,15 @@ if (setup.degraded) {
     string,
     WebStandardStreamableHTTPServerTransport
   >();
-  const { config, authService, oidcVerifier } = setup;
-  const authMw = createRpiAuthMiddleware(authService, authRequired, oidcVerifier);
+  const { config, authService, oidcVerifier, instanceEndpoints } = setup;
+  // Pass oauthDiscoveryEnabled so 401s carry the WWW-Authenticate → PRM
+  // challenge exactly when we serve discovery (an OIDC issuer was found).
+  const authMw = createRpiAuthMiddleware(
+    authService,
+    authRequired,
+    oidcVerifier,
+    !!oidcIssuer,
+  );
 
   app.all("/mcp", authMw, async (c) => {
     const sessionId = c.req.header("mcp-session-id");
@@ -195,7 +310,13 @@ if (setup.degraded) {
       }
     };
 
-    const { server } = createRPIMcpServer(config, authService, oidcVerifier);
+    const { server, maskedCount } = createRPIMcpServer(
+      config,
+      authService,
+      oidcVerifier,
+      instanceEndpoints,
+    );
+    if (!setup.degraded) setup.maskedCount = maskedCount;
     await server.connect(transport);
     return transport.handleRequest(c.req.raw, { authInfo });
   });

@@ -6,6 +6,8 @@
  * /api/v2/authentication/validate-token-status.
  */
 
+import { safeErrorDetail } from "./http-error.js";
+
 export interface TokenResponse {
   access_token: string;
   token_type: string;
@@ -31,6 +33,10 @@ export interface LoginSetting {
 }
 
 const VALIDATION_CACHE_TTL_MS = 30_000; // 30 seconds
+// Bound the validate-token-status fetch so it can't hang unbounded (normal ~575ms; the
+// MCP transport's own budget is far larger). Well over a healthy call, well under any
+// probe/transport fuse. On timeout the token is treated as a CLEAN validation failure.
+const VALIDATION_FETCH_TIMEOUT_MS = 8_000;
 const MIN_TOKEN_TTL_SECONDS = 60;
 
 export class RPIAuthService {
@@ -112,7 +118,7 @@ export class RPIAuthService {
 
     if (!response.ok) {
       throw new Error(
-        `RPI user login failed: ${response.status} ${response.statusText} — ${await response.text()}`,
+        `RPI user login failed: ${safeErrorDetail(response.status, response.statusText)}`,
       );
     }
 
@@ -142,7 +148,7 @@ export class RPIAuthService {
 
     if (!response.ok) {
       throw new Error(
-        `RPI token refresh failed: ${response.status} ${response.statusText} — ${await response.text()}`,
+        `RPI token refresh failed: ${safeErrorDetail(response.status, response.statusText)}`,
       );
     }
 
@@ -154,22 +160,38 @@ export class RPIAuthService {
    * Returns true if valid, false if unauthorized.
    * Results are cached for 30 seconds keyed by token hash.
    */
-  async validateToken(token: string): Promise<boolean> {
-    const cacheKey = await this.hashToken(token);
+  async validateToken(token: string, targetBase?: string): Promise<boolean> {
+    // Validate against the per-request Environment Location when given, else the
+    // construction-time default. Normalise like the constructor (strip /api/v2 +
+    // trailing slash). Cache is keyed by (base, token) so the same token isn't
+    // conflated across instances.
+    const base = (targetBase ?? this.baseUrl)
+      .replace(/\/api\/v2\/?$/, "")
+      .replace(/\/$/, "");
+    const cacheKey = `${base}::${await this.hashToken(token)}`;
 
     const cached = this.validationCache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt) {
       return cached.valid;
     }
 
-    const response = await fetch(
-      `${this.baseUrl}/api/v2/authentication/validate-token-status`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    );
+    let valid: boolean;
+    try {
+      const response = await fetch(
+        `${base}/api/v2/authentication/validate-token-status`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(VALIDATION_FETCH_TIMEOUT_MS),
+        },
+      );
+      valid = response.ok;
+    } catch {
+      // Timed out (VALIDATION_FETCH_TIMEOUT_MS) or a network error — treat as a CLEAN
+      // validation failure rather than a hang, and do NOT cache it: a transient stall must
+      // not lock the token out for the full 30s TTL, so the next request retries fresh.
+      return false;
+    }
 
-    const valid = response.ok;
     this.validationCache.set(cacheKey, {
       valid,
       expiresAt: Date.now() + VALIDATION_CACHE_TTL_MS,
@@ -217,7 +239,7 @@ export class RPIAuthService {
 
     if (!response.ok) {
       throw new Error(
-        `RPI token request failed: ${response.status} ${response.statusText} — ${await response.text()}`,
+        `RPI token request failed: ${safeErrorDetail(response.status, response.statusText)}`,
       );
     }
 

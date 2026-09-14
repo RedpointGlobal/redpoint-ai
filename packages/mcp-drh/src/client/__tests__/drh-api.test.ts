@@ -122,10 +122,17 @@ describe("DRHApiClient", () => {
     expect(out).toBe("a,b,c\n1,2,3");
   });
 
-  it("throws with status + body on a non-401 error", async () => {
+  it("throws with status on a non-401 error, WITHOUT leaking the response body", async () => {
+    // SECURITY: the raw upstream body ("boom") must never reach the thrown
+    // client error. Status only. (See http-error.ts / the leak guard test.)
     apiResponses = [{ status: 500, body: "boom" }];
-    await expect(client().request("GET", "/api-op/v1/databases")).rejects.toThrow(
-      /failed: 500.*boom/,
-    );
+    let msg = "";
+    try {
+      await client().request("GET", "/api-op/v1/databases");
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e);
+    }
+    expect(msg).toContain("failed: 500");
+    expect(msg).not.toContain("boom");
   });
 });
