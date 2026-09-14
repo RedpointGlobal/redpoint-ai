@@ -26,7 +26,7 @@
     "express": "5.2.1",
     "hono": "4.12.25",
     "jose": "6.2.2",
-    "ollama-ai-provider-v2": "3.5.0",
+    "ollama-ai-provider-v2": "4.0.1",
     "pino": "9.14.0",
     "postgres": "3.4.9",
     "prom-client": "15.1.3",
