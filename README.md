@@ -1,6 +1,6 @@
 # RedpointAI
 
-Open-source AI agent platform for Redpoint Interaction (RPI) and Data Readiness Hub (DRH). Build, compose, and run AI agents against your RPI instance with your own LLM provider key (BYOM).
+RedpointAI is an open-source AI agent platform for Redpoint Interaction (RPI) and Data Readiness Hub (DRH). Build, compose, and run AI agents against your RPI and DRH instances using your own LLM provider (BYOM), with a Skill Router that keeps agent responses fast, accurate, and cost-efficient.
 
 ## Tech Stack
 
