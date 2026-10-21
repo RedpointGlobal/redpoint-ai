@@ -3,6 +3,10 @@ peer = false
 # Hard-fail `bun install` on Bun versions outside the engines.bun range in package.json,
 # so customers with too-old Bun get a clear error instead of cryptic native-compile failures.
 engine-strict = true
+# Supply chain: don't resolve a package version until it has been published for 7 days
+# (seconds), so a compromised release is usually caught and pulled before we can pick
+# it up. Affects only resolving NEW versions; --frozen-lockfile installs are unchanged.
+minimumReleaseAge = 604800
 
 [test]
 timeout = 30000

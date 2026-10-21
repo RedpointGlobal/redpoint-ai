@@ -13,6 +13,14 @@ import { registerAuthTools } from "./tools/auth.js";
 import type { DRHApiClient } from "./client/drh-api.js";
 
 /**
+ * The most array elements plus object members one tools/call `arguments` payload may
+ * carry. Without a ceiling, a single request inside the body limit could exhaust memory
+ * during validation (GHSA-46jr-4wx8-v453 / CVE-2026-111768); the SDK's check is opt-in.
+ * Far above any real call and cheap: the count stops at the ceiling plus one.
+ */
+export const MAX_TOOL_INPUT_ELEMENTS = 10_000;
+
+/**
  * DRH MCP server factory. A new instance is created per HTTP session (the SDK
  * Protocol can only `connect()` once per server). Mirrors `createRPIMcpServer`.
  *
@@ -21,10 +29,13 @@ import type { DRHApiClient } from "./client/drh-api.js";
  * server exposes no tools — the DR Hub workspace requires credentials.
  */
 export function createDrhMcpServer(client?: DRHApiClient) {
-  const server = new McpServer({
-    name: "drh-mcp-server",
-    version: "0.1.0",
-  });
+  const server = new McpServer(
+    {
+      name: "drh-mcp-server",
+      version: "0.1.0",
+    },
+    { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
+  );
 
   if (client) {
     registerDatabaseTools(server, client);

@@ -92,7 +92,7 @@ Total unique packages: **934**
 - @jridgewell/resolve-uri@3.1.2
 - @jridgewell/sourcemap-codec@1.5.5
 - @jridgewell/trace-mapping@0.3.31
-- @modelcontextprotocol/sdk@1.29.0
+- @modelcontextprotocol/sdk@1.32.0
 - @mswjs/interceptors@0.41.3
 - @next/env@16.2.9
 - @next/eslint-plugin-next@16.2.3

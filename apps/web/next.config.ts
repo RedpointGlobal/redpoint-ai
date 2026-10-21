@@ -23,6 +23,9 @@ if (existsSync(rootEnv)) {
 const nextConfig: NextConfig = {
   output: "standalone",
   turbopack: {},
+  // No image optimizer: the app uses no next/image, and /_next/image would fetch any
+  // same-origin path and decode whatever bytes come back. Off, the route is a 404.
+  images: { unoptimized: true },
   env: {
     AUTH_REQUIRED: process.env.AUTH_REQUIRED,
     AUTH_SECRET: process.env.AUTH_SECRET,

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.145]
+
+### Security
+
+- **Node 22.23.4 in both images**, every Node image pinned by digest. The web image served from `node:22.12-alpine` and built Next.js with Node 22.12; the server image installed Debian's `nodejs` 20.19.2, a release line past its end of life. The server image now copies the official binary before `bun install` (better-sqlite3 is built for its ABI) and installs no `nodejs`. A test holds the Dockerfiles to it.
+- **`@modelcontextprotocol/sdk` 1.32.0 with the tool-argument ceiling set**: GHSA-46jr-4wx8-v453 (CVE-2026-111768) and CVE-2026-111767. Both MCP servers (`packages/mcp-rpi`, `packages/mcp-drh`) set `maxToolInputElements` to 10,000, so a `tools/call` whose arguments are large enough to exhaust memory during validation is refused first. 1.32.0 is above GHSA-6qxp-vccf-f47h (CVE-2026-104850), fixed in 1.31.0.
+- **Next.js 16.3.8**, the lowest release that clears every Next.js advisory open against 16.2.9. The web image runs `next build` under Node: Next 16.3's Turbopack build crashes under Bun.
+- **The image optimizer is off** (`images.unoptimized`): `/_next/image` answers 404 before it fetches or decodes anything. The app uses no `next/image`.
+- **The web proxy routes refuse a workspace id that leaves its server path**: only `[A-Za-z0-9_-]` ids reach the server; anything else gets 400 before an upstream call.
+- **Dependency pins**: `sharp` 0.35.5 (GHSA-f88m-g3jw-g9cj, GHSA-rgj7-g3m4-5g8c, GHSA-wq5f-xc86-pv6w), `shell-quote` 1.11.0 (GHSA-pqg4-j6r4-53mv; not installed or shipped), `proxy-addr` 2.0.8 (GHSA-jqcg-44mw-7w3h).
+- **A 7-day release-age wait for new dependency versions**: `bunfig.toml` `minimumReleaseAge` and a Dependabot cooldown.
+
+### Changed
+
+- The README's opening line describes RPI and DRH support and the Skill Router.
+
 ## [Unreleased]
 
 ### Added

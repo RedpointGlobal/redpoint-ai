@@ -8,9 +8,12 @@
     "node": ">=22.6.0"
   },
   "workspaces": ["apps/*", "packages/*"],
-  "//overrides": "shell-quote forced above the GHSA-w7jw-789q-3m8p / GHSA-395f-4hp3-45gv line (vuln <=1.8.3). Transitive via drizzle-kit dev tooling; no runtime path, but pinned repo-wide to keep bun audit at 0 critical.",
+  "//overrides": "shell-quote pinned to 1.11.0, the fix for GHSA-pqg4-j6r4-53mv (CVE-2026-102422; vuln >=1.8.4 <1.11.0), which is also above the older GHSA-w7jw-789q-3m8p / GHSA-395f-4hp3-45gv line (vuln <=1.8.3). Transitive via gel, an optional peer of drizzle-orm that loads only through a drizzle-orm/gel import, which this repo never makes (it uses the bun-sqlite and postgres-js drivers). sharp forced to >=0.35.5 (bundled libvips 8.18.x) for GHSA-f88m-g3jw-g9cj / GHSA-rgj7-g3m4-5g8c / GHSA-wq5f-xc86-pv6w: an optional dep of next (which declares ^0.34.5), used by its /_next/image optimizer; next 16.2 runs it unchanged. @modelcontextprotocol/sdk forced to 1.32.0 for GHSA-46jr-4wx8-v453 (CVE-2026-111768; a tools/call whose arguments are large enough can exhaust memory during validation, closed by the server's opt-in maxToolInputElements ceiling, which packages/mcp-rpi and packages/mcp-drh set) and CVE-2026-111767 (the SDK's tasks store, which this repo never uses); it is also above GHSA-6qxp-vccf-f47h (CVE-2026-104850; vuln >=1.12.0 <1.31.0, the SDK's OAuth client provider flow, which this repo never uses). apps/server and both MCP packages declare it directly, and the override also lifts shadcn's own copy (it declares ^1.26.0).",
   "overrides": {
-    "shell-quote": "1.10.0"
+    "shell-quote": "1.11.0",
+    "sharp": "^0.35.5",
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "proxy-addr": "2.0.8"
   },
   "scripts": {
     "build": "bun run --filter '*' build",

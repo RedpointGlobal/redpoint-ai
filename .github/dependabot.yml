@@ -10,3 +10,6 @@ updates:
       interval: "weekly"
     labels:
       - "dependencies"
+    # Supply chain: wait 7 days after a version is published before proposing it.
+    cooldown:
+      default-days: 7

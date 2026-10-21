@@ -7,6 +7,7 @@
  * the query string (?clear=1) verbatim.
  */
 import { buildForwardHeaders } from "@/lib/server-forward";
+import { invalidWorkspaceId, isWorkspaceId } from "@/lib/workspace-id";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
@@ -17,6 +18,7 @@ export async function GET(
   ctx: { params: Promise<{ workspaceId: string }> },
 ): Promise<Response> {
   const { workspaceId } = await ctx.params;
+  if (!isWorkspaceId(workspaceId)) return invalidWorkspaceId();
   const cookieHeader = request.headers.get("cookie") ?? "";
   const url = new URL(request.url);
   const origin = url.origin;
