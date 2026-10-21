@@ -41,7 +41,7 @@
     "release:zip": "bun run scripts/release-zip.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "hono": "4.12.25",
     "jose": "6.2.2",
     "zod": "3.25.76"

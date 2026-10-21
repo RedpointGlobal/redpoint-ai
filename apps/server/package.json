@@ -18,7 +18,7 @@
     "@ai-sdk/mcp": "1.0.39",
     "@ai-sdk/openai": "3.0.58",
     "@hono/zod-validator": "0.5.0",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "@redpoint-ai/shared": "workspace:*",
     "@redpoint-ai/skills": "workspace:*",
     "ai": "6.0.174",

@@ -1,9 +1,13 @@
 FROM oven/bun:1.3.12
 # python3 + make + g++ are required by better-sqlite3's node-gyp postinstall.
-# nodejs is required at *runtime* (not just build) so seed.ts can invoke
+# Node is required at *runtime* (not just build) so seed.ts can invoke
 # drizzle-kit on first start to apply the SQLite schema. drizzle-kit uses
 # better-sqlite3's Node-native bindings, which Bun can't dlopen — Node can.
-RUN apt-get update && apt-get install -y python3 make g++ nodejs && rm -rf /var/lib/apt/lists/*
+# It is the official binary, pinned by digest, not the distribution's nodejs (a
+# release line past its end of life that security releases never reach); it is
+# in place before `bun install`, so better-sqlite3 is built for its ABI.
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+COPY --from=node:22.23.4-bookworm-slim@sha256:5991875dfb80938dd8a6ba3fe3e96fd04929e70792762b3319d8caadbbe229bc /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 
 # Single-stage: copy everything (filtered by .dockerignore which excludes all

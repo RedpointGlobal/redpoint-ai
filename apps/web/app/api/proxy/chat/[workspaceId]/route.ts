@@ -36,6 +36,7 @@
  */
 
 import { getToken } from "next-auth/jwt";
+import { invalidWorkspaceId, isWorkspaceId } from "@/lib/workspace-id";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
@@ -66,6 +67,7 @@ export async function POST(
   ctx: { params: Promise<{ workspaceId: string }> },
 ): Promise<Response> {
   const { workspaceId } = await ctx.params;
+  if (!isWorkspaceId(workspaceId)) return invalidWorkspaceId();
 
   // Step 1 — read the access_token + expiry from the inbound JWT.
   //

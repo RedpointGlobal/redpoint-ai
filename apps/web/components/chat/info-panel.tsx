@@ -703,7 +703,7 @@ function TrafficTab({
       // apps/server: the browser EventSource can't set Authorization, so a direct
       // hit 401s under auth=true. The proxy injects the session credential and
       // pipes the SSE through. Same-origin → the browser sends the session cookie.
-      es = new EventSource(`/api/proxy/trace/${workspaceId}/stream`);
+      es = new EventSource(`/api/proxy/trace/${encodeURIComponent(workspaceId)}/stream`);
       es.onmessage = (msg) => {
         try {
           const ev = JSON.parse(msg.data) as TelemetryEvent;
@@ -770,7 +770,7 @@ function TrafficTab({
     setEntries([]);
     // Best-effort server-side clear too; ignored if it fails. Same-origin proxy
     // (injects the session credential) — a direct apps/server hit 401s under auth=true.
-    fetch(`/api/proxy/trace/${workspaceId}?clear=1`).catch(() => {});
+    fetch(`/api/proxy/trace/${encodeURIComponent(workspaceId)}?clear=1`).catch(() => {});
   };
 
   // Export — entries are already TelemetryEvents, so the JSON envelope is

@@ -16,6 +16,15 @@ import { normalizeEndpoint } from "./endpoint-path.js";
 import { registerGeneratedTools } from "./tools/generated/index.js";
 import { initAuthScope } from "./auth-scope.js";
 
+/**
+ * The most array elements plus object members one tools/call `arguments` payload may
+ * carry. Without a ceiling, a single request inside the body limit could exhaust memory
+ * during validation (GHSA-46jr-4wx8-v453 / CVE-2026-111768); the SDK's check is opt-in.
+ * Far above any real call (the largest, selection-rule criteria, run to hundreds) and
+ * cheap: the count stops at the ceiling plus one.
+ */
+export const MAX_TOOL_INPUT_ELEMENTS = 10_000;
+
 export function createRPIMcpServer(
   rpiConfig: RPIConfig,
   authService: RPIAuthService,
@@ -24,10 +33,13 @@ export function createRPIMcpServer(
   // null → fail-open: don't mask, the full compiled-in superset stays registered.
   instanceEndpoints?: Set<string> | null,
 ) {
-  const server = new McpServer({
-    name: "rpi-mcp-server",
-    version: "0.1.0",
-  });
+  const server = new McpServer(
+    {
+      name: "rpi-mcp-server",
+      version: "0.1.0",
+    },
+    { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
+  );
 
   const rpiClient = new RPIApiClient(
     rpiConfig.integrationApiUrl,

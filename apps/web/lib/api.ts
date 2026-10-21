@@ -58,7 +58,7 @@ export async function listWorkspaces(
  * getWorkspaceRuntimeStatus below.
  */
 export async function getWorkspace(id: string): Promise<Workspace> {
-  const res = await fetch(`/api/proxy/workspaces/${id}`);
+  const res = await fetch(`/api/proxy/workspaces/${encodeURIComponent(id)}`);
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`);
   }
@@ -77,14 +77,14 @@ export async function createWorkspace(data: {
 }
 
 export async function listThreads(workspaceId: string): Promise<Thread[]> {
-  return api(`/api/v1/workspaces/${workspaceId}/threads`);
+  return api(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/threads`);
 }
 
 export async function createThread(
   workspaceId: string,
   title?: string,
 ): Promise<Thread> {
-  return api(`/api/v1/workspaces/${workspaceId}/threads`, {
+  return api(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/threads`, {
     method: "POST",
     body: JSON.stringify({ title }),
   });
@@ -102,7 +102,7 @@ export interface WorkspaceTool {
  * getWorkspace above.
  */
 export async function getWorkspaceTools(id: string): Promise<WorkspaceTool[]> {
-  const res = await fetch(`/api/proxy/workspaces/${id}/tools`);
+  const res = await fetch(`/api/proxy/workspaces/${encodeURIComponent(id)}/tools`);
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`);
   }
@@ -163,7 +163,7 @@ export async function getWorkspaceRuntimeStatus(
   // decodes the JWT, and attaches X-RPI-Token to the apps/server upstream.
   // JS code never sees the raw RPI token. Same-origin URL so the browser
   // sends the cookie automatically.
-  const res = await fetch(`/api/proxy/runtime-status/${id}`);
+  const res = await fetch(`/api/proxy/runtime-status/${encodeURIComponent(id)}`);
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`);
   }
@@ -198,7 +198,7 @@ export interface TelemetryEvent {
 }
 
 export async function getWorkspaceTrace(id: string): Promise<TelemetryEvent[]> {
-  return api(`/api/v1/workspaces/${id}/trace`);
+  return api(`/api/v1/workspaces/${encodeURIComponent(id)}/trace`);
 }
 
 export function getChatUrl(workspaceId: string): string {
@@ -206,5 +206,5 @@ export function getChatUrl(workspaceId: string): string {
   // server-side and forwards X-RPI-Token to apps/server. Browser only sees
   // the relative path; the RPI access_token never reaches client JS. The
   // browser sends the session cookie automatically because it's same-origin.
-  return `/api/proxy/chat/${workspaceId}`;
+  return `/api/proxy/chat/${encodeURIComponent(workspaceId)}`;
 }
