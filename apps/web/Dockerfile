@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.12 AS builder
+FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS builder
 # python3 + make + g++ are required because better-sqlite3 (a workspace-root
 # dep) fires its node-gyp postinstall during `bun install` even from this
 # build context. Bun installs; Node runs the Next.js build (below); the runner

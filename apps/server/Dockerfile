@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.12
+FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d
 # python3 + make + g++ are required by better-sqlite3's node-gyp postinstall.
 # Node is required at *runtime* (not just build) so seed.ts can invoke
 # drizzle-kit on first start to apply the SQLite schema. drizzle-kit uses
