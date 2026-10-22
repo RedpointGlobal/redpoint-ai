@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.146]
+
+### Security
+
+- **Bun 1.4.4 in every image: no compromised root in the trust store.** Bun carries its own CA bundle, and a binary it compiles carries that bundle too. Bun 1.3.12 still trusted emSign ECC Root CA - G3, which the Mozilla root store removed after the CA's signing key was compromised, so a certificate it signed could have impersonated the RPI or DRH API, or the model provider. Every `oven/bun` stage (the server image, the web image's builder, and the builders that compile the RPI and DRH MCP server binaries) is now `oven/bun:1.4.4`, pinned by digest: the first Bun whose bundle drops that root (emSign Root CA - G1 stays, as in Mozilla's store). `scripts/__tests__/pinned-bun.test.ts` holds every `oven/bun` stage, digest-pinned, at or above 1.4.4. A binary built on the host with `bun run build:all` carries the host Bun's bundle: build with Bun 1.4.4 or later.
+- Bun 1.4.4 adopted as a documented exception to the 7-day minimumReleaseAge rule to remediate the eMudhra/emSign ECC Root CA G3 trust (active CA exposure); digest-pinned + full-test-gated.
+
 ## [7.145]
 
 ### Security

@@ -10,7 +10,7 @@
 # sidesteps that landmine entirely. The full workspace is present in the *builder*
 # (symlinks intact there) only long enough to compile; only the binary is forwarded.
 
-FROM oven/bun:1.3.12 AS builder
+FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS builder
 WORKDIR /app
 # python3/make/g++: the workspace-root better-sqlite3 fires node-gyp during bun install.
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
