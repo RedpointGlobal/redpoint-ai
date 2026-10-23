@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.147]
+
+### Security
+
+- **Next.js 16.4.1** (was 16.3.8): GHSA-2464 (image optimizer SVG handling, remote code execution), GHSA-673q (`use cache`, remote code execution) and CVE-2026-94482 (Server Actions denial of service). None is reachable in this app (the image optimizer is off, no `use cache`, no Server Actions), but the vulnerable code ships in the dependency. Only `next` and its own `@next/*` packages change; `sharp` stays 0.35.5.
+
 ## [7.146]
 
 ### Security
