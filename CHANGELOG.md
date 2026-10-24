@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.148]
+
+### Changed
+
+- **The RPI and DRH MCP servers are current with their maintained source.** `packages/mcp-rpi` and `packages/mcp-drh` now carry the RPI MCP server 7.224 and the DRH MCP server 7.213 source, copied from the servers' own repositories. They bring the hardening those releases carry: loopback-only binding in the native-credentials mode, rate limits, per-owner idle-expiring sessions, request-size and upstream-response limits, a per-call audit line, the tool-surface count, user-scoped sessions, the tenant pin, the production serve mode and the version report, each with its tests. Two adjustments for this repository's layout: the servers find the repository-root `.env` three directories up, and one RPI test that inspects the servers' own container build is not included.
+- `docs/architecture.md` and `docs/rpi-mcp-server.md`: the pinned Bun decides the trusted roots (every `oven/bun` stage at or above 1.4.4, held by `scripts/__tests__/pinned-bun.test.ts`); build binaries with Bun 1.4.4 or later.
+
 ## [7.147]
 
 ### Security

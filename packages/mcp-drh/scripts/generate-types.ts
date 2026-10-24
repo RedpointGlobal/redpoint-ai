@@ -6,9 +6,6 @@
  * Reads DRH_OPENAPI_SPEC from the environment (URL or file path).
  * Errors if unset and no generated file already exists.
  * Pass --check to verify the existing generated file is up-to-date.
- *
- * Mirrors packages/mcp-rpi/scripts/generate-types.ts (intentional copy — the
- * two MCP servers stay independent; mcp-rpi is not refactored into a shared lib).
  */
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -81,9 +78,8 @@ if (isCheck) {
   const existing = await Bun.file(outputPath).text();
   // Compare bodies. `generated` here is the RAW openapi-typescript output (read
   // above, before the header was prepended), so it is already header-less —
-  // strip the 5-line header only from the committed `existing`. (The verbatim
-  // RPI copy stripped BOTH, lopping 5 real type lines off `generated` so the
-  // check could never pass; corrected here. mcp-rpi left as-is per zero-diff.)
+  // strip the 5-line header only from the committed `existing` (stripping both
+  // would lop 5 real type lines off `generated`, and the check could never pass).
   const stripHeader = (s: string) => s.split("\n").slice(5).join("\n");
   if (stripHeader(existing) !== generated) {
     console.error(

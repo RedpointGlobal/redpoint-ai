@@ -17,7 +17,7 @@ See `docs/rpi-mcp-server.md#authentication` for the full walkthrough.
 ### Run
 
 ```bash
-bun run packages/mcp-rpi/examples/agent-auth-flow.ts
+bun run examples/agent-auth-flow.ts
 ```
 
 ### Required env

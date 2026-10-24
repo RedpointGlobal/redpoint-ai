@@ -9,9 +9,9 @@ import { z } from "zod";
  * dispatches to the right sub-path).
  */
 
-/** Per-tool tenant arg. The DRHApiClient forwards it as the X-ClientId header;
- *  omit to use the server default (DRH_DEFAULT_CLIENT_ID). Distinct arg name so
- *  the platform's injected RPI clientId (stripped by zod) never bleeds in. */
+/** Per-tool tenant arg (`clientId`). The DRHApiClient forwards it as the X-ClientId
+ *  header; omit it to use the server default (DRH_DEFAULT_CLIENT_ID). When the
+ *  server is pinned to one tenant (DRH_PIN_CLIENT_ID), a different value is refused. */
 export const drhClientIdSchema = z
   .string()
   .optional()

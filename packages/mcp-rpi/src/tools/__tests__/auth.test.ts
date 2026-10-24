@@ -1,13 +1,12 @@
 /**
- * #27895 — verify_connection must not report a false 401 on a multi-tenant
+ * verify_connection must not report a false 401 on a multi-tenant
  * instance when no tenant is selected. The connected/auth signal is the
  * CLIENT-AGNOSTIC user-client-list probe; /info/version (tenant-scoped) is
  * secondary — a 401 there with no tenant is "connected, no tenant selected yet",
  * not an auth failure.
  *
  * Register the real tool onto a fake MCP server, back RPIApiClient with a
- * URL-aware mock fetch, invoke the handler, assert the status blob (mirrors the
- * mcp-drh tools.test.ts harness — no live RPI).
+ * URL-aware mock fetch, invoke the handler, assert the status blob (no live RPI).
  */
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { RPIAuthService } from "../../client/rpi-auth.js";
@@ -76,7 +75,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-describe("verify_connection (#27895)", () => {
+describe("verify_connection", () => {
   it("multi-tenant, NO tenant selected: client-list 200 + version 401 → connected, NOT a failure", async () => {
     installFetch({ clientListStatus: 200, versionStatus: 401 });
     const r = await run(); // no clientId

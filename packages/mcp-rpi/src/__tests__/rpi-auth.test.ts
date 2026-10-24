@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { RPIAuthService } from "../client/rpi-auth.js";
+import { RPIAuthService, MAX_VALIDATION_CACHE_ENTRIES } from "../client/rpi-auth.js";
 
 // ---------------------------------------------------------------------------
 // Mock fetch globally
@@ -203,7 +203,7 @@ describe("RPIAuthService", () => {
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
 
-    // #28066 fix — the validate-token-status fetch is now bounded (AbortSignal.timeout)
+    // The validate-token-status fetch is now bounded (AbortSignal.timeout)
     // so it can't hang unbounded; a timeout/network error is a CLEAN failure, not a hang.
     it("bounded: passes an AbortSignal to the fetch (so it can't hang unbounded)", async () => {
       let sawSignal = false;
@@ -243,6 +243,69 @@ describe("RPIAuthService", () => {
       // NOT cached: a transient stall must not lock the token out for the TTL — retries.
       await auth.validateToken("tok");
       expect(calls).toBe(2);
+    });
+
+    it("single-flight: N concurrent checks of one token → ONE RPI call, all get its answer", async () => {
+      let calls = 0;
+      mockFetch(async () => {
+        calls++;
+        await Bun.sleep(50);
+        return jsonResponse({ status: "valid" });
+      });
+      const auth = new RPIAuthService("https://rpi.example.com");
+      const results = await Promise.all(Array.from({ length: 50 }, () => auth.validateToken("same")));
+      expect(results.every((r) => r === true)).toBe(true);
+      expect(calls).toBe(1);
+    });
+
+    it("single-flight: only the check that STARTS a remote validation is admitted; joiners and cache hits are not", async () => {
+      mockFetch(async () => {
+        await Bun.sleep(50);
+        return new Response("no", { status: 401 });
+      });
+      const auth = new RPIAuthService("https://rpi.example.com");
+      let admissions = 0;
+      const admit = () => (admissions++, { ok: true as const });
+      const results = await Promise.all(Array.from({ length: 20 }, () => auth.checkToken("junk", undefined, admit)));
+      expect(results.every((r) => r.result === "invalid")).toBe(true);
+      expect(admissions).toBe(1);
+      // Cached now: no admission, no call.
+      expect((await auth.checkToken("junk", undefined, admit)).result).toBe("invalid");
+      expect(admissions).toBe(1);
+    });
+
+    it("a refused admission → 'refused' with its Retry-After, and RPI is NOT called", async () => {
+      let calls = 0;
+      mockFetch(() => (calls++, jsonResponse({ status: "valid" })));
+      const auth = new RPIAuthService("https://rpi.example.com");
+      expect(await auth.checkToken("t", undefined, () => ({ ok: false, retryAfterSec: 7 }))).toEqual({ result: "refused", retryAfterSec: 7 });
+      expect(calls).toBe(0);
+    });
+
+    it("RPI unreachable → 'unavailable' (distinct from 'invalid'), not cached", async () => {
+      mockFetch(() => Promise.reject(new Error("down")));
+      const auth = new RPIAuthService("https://rpi.example.com");
+      expect((await auth.checkToken("t")).result).toBe("unavailable");
+      expect(auth.validationCacheSize).toBe(0);
+    });
+
+    it(`the cache is capped at MAX_VALIDATION_CACHE_ENTRIES (${MAX_VALIDATION_CACHE_ENTRIES}); the least recently used goes first`, async () => {
+      let calls = 0;
+      mockFetch(() => (calls++, new Response("no", { status: 401 })));
+      const auth = new RPIAuthService("https://rpi.example.com");
+      await auth.validateToken("first");
+      await auth.validateToken("second");
+      for (let i = 0; i < MAX_VALIDATION_CACHE_ENTRIES - 2; i++) await auth.validateToken(`t-${i}`);
+      expect(auth.validationCacheSize).toBe(MAX_VALIDATION_CACHE_ENTRIES);
+      // Touch "first" → most recently used; the next new token evicts "second".
+      await auth.validateToken("first");
+      await auth.validateToken("one-more");
+      expect(auth.validationCacheSize).toBe(MAX_VALIDATION_CACHE_ENTRIES);
+      const before = calls;
+      await auth.validateToken("first"); // still cached
+      expect(calls).toBe(before);
+      await auth.validateToken("second"); // evicted → asked again
+      expect(calls).toBe(before + 1);
     });
   });
 

@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { MCP_DRH_VERSION } from "./version.js";
 import { registerDatabaseTools } from "./tools/databases.js";
 import { registerSourceTools } from "./tools/sources.js";
 import { registerFeedTools } from "./tools/feeds.js";
@@ -10,6 +11,7 @@ import { registerAggsTools } from "./tools/aggs.js";
 import { registerAutomationLogTools } from "./tools/automation-logs.js";
 import { registerUiDashboardTools } from "./tools/ui-dashboard.js";
 import { registerAuthTools } from "./tools/auth.js";
+import { installToolAudit } from "./tool-audit.js";
 import type { DRHApiClient } from "./client/drh-api.js";
 
 /**
@@ -22,7 +24,7 @@ export const MAX_TOOL_INPUT_ELEMENTS = 10_000;
 
 /**
  * DRH MCP server factory. A new instance is created per HTTP session (the SDK
- * Protocol can only `connect()` once per server). Mirrors `createRPIMcpServer`.
+ * Protocol can only `connect()` once per server).
  *
  * The real tool surface registers only when a live `client` is present (built
  * from env in http.ts). With no client configured (no DRH credentials) the
@@ -32,7 +34,7 @@ export function createDrhMcpServer(client?: DRHApiClient) {
   const server = new McpServer(
     {
       name: "drh-mcp-server",
-      version: "0.1.0",
+      version: MCP_DRH_VERSION,
     },
     { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
   );
@@ -51,15 +53,17 @@ export function createDrhMcpServer(client?: DRHApiClient) {
     registerAuthTools(server, client);
 
     disableWriteTools(server);
+    // One audit line per tool call, outermost (after the write-tool sweep so a
+    // disabled tool is never wrapped). The principal/tenant/argKeys rules live in
+    // tool-audit.ts; the native account is set once at boot in http.ts.
+    installToolAudit(server);
   }
 
   return { server };
 }
 
 // ---------------------------------------------------------------------------
-// Write-tool enforcement — unconditional, no env toggle by design. Mirrors
-// createRPIMcpServer's gate (see packages/mcp-rpi/src/server.ts for the full
-// rationale).
+// Write-tool enforcement — unconditional, no env toggle by design.
 //
 // The standalone MCP binaries expose the raw registered surface to any
 // authenticated MCP client — no skills, no mcpToolFilter. This sweep disables
@@ -77,8 +81,7 @@ export function createDrhMcpServer(client?: DRHApiClient) {
 // registered (schema/handler/description intact), so reversal is one array entry
 // + rebuild, doable by us with no DRH-side dependency.
 //
-// The allowlist is intentionally empty: unlike RPI's count/waterfall, no DRH
-// write is a read-shaped rep workflow — the job-starting tools here
+// The allowlist is intentionally empty: no DRH write is a read-shaped workflow — the job-starting tools here
 // (drh_create_match_run, drh_create_feed_run, drh_create_rpi_sync_run) trigger
 // real server-side processing and are correctly gated. If reps need to fire a
 // specific run from the binary, add that one tool name here.

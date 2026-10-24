@@ -1,5 +1,5 @@
 /**
- * #27897 — parseRetryAfterMs: turns a Retry-After header into a ms wait for the
+ * parseRetryAfterMs: turns a Retry-After header into a ms wait for the
  * summarize_interaction_runs 429 backoff. Supports delta-seconds and HTTP-date.
  */
 import { describe, it, expect } from "bun:test";

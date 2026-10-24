@@ -1,5 +1,5 @@
 /**
- * #27897 — server-side run aggregation (option B, reports-derived). Locks the TRUE
+ * Server-side run aggregation (reports-derived). Locks the TRUE
  * math that replaces the agent's in-context fabrication: the reports-page collector
  * (paging + bounds + partial-on-error), the 429 backoff, and the interaction-report
  * dashboard summary (totals, active/test/production interaction counts, top-N
@@ -208,7 +208,7 @@ describe("summarizeInteractionReports (option B — reports-derived dashboard)",
 });
 
 // ---------------------------------------------------------------------------
-// Run COUNTS over time (#27957 / RPI 7.8) — server-side GROUP BY. fetchRunCounts
+// Run COUNTS over time (RPI 7.8) — server-side GROUP BY. fetchRunCounts
 // is a thin body-builder over the POST reports/interaction/run-counts endpoint:
 // it fills the required defaults, forwards optional filters, and returns the
 // result verbatim (RPI does the aggregation; we never re-shape or invent it).

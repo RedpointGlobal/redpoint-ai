@@ -309,6 +309,8 @@ Via `docker compose up`, RedpointAI runs as **separate containers** — not a si
 
 Four of the five containers are built from code in this repo; PostgreSQL is pulled as a stock image rather than rebuilt locally, which is the standard pattern for commodity infrastructure (databases, caches, brokers). This keeps our security surface to the code we own.
 
+**The pinned Bun decides the trusted roots.** Bun carries its own CA bundle, and a binary it compiles carries that bundle too, so the Bun version in each image, not the base image's certificate store, decides which roots every outbound TLS call trusts (the RPI and DRH APIs, the model provider). Every `oven/bun` stage (the server image, the web image's builder, and the builders that compile the MCP server binaries) is pinned by digest at or above Bun 1.4.4, the first Bun whose bundle drops emSign ECC Root CA - G3 (distrusted after its signing key was compromised). `scripts/__tests__/pinned-bun.test.ts` holds every one of those stages to that floor.
+
 A single all-in-one container is a possibility for resource-constrained edge deployments, but it requires a process supervisor inside the container and forfeits the benefits above. We don't ship one.
 
 ## Key Technologies

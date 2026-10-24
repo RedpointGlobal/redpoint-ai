@@ -148,9 +148,9 @@ describe("tools/list filtering via live server", () => {
     );
   }
 
-  // 46 hand tools + 153 generated (#27634 complete: 185 in-scope GETs = 153
+  // 46 hand tools + 153 generated (complete: 185 in-scope GETs = 153
   // authored + 29 hand-covered + 3 suppressed functional-dups) = 199 registered
-  // (list_interaction_runs removed, #27897 — its endpoint was unusable);
+  // (list_interaction_runs removed — its endpoint was unusable);
   // 5 hand writes are gated at construction, so tools/list — which the SDK filters
   // on `enabled` — exposes 197 (44 hand reads + 153 generated). The mask is a no-op
   // here (harness passes no instanceEndpoints). Explicit gate checks live in
@@ -276,42 +276,42 @@ describe("tools/list filtering via live server", () => {
   });
 
   // -------------------------------------------------------------------------
-  // LOAD-BEARING TOOL-PRESENCE GUARD (#27957 regen fallout).
+  // LOAD-BEARING TOOL-PRESENCE GUARD (regen fallout).
   // get_user_client_list was silently DROPPED when the 7.8 regen's
   // deriveHandEndpoints treated verify_connection's _meta.endpoints probe of
   // /authentication/user-client-list as hand-coverage and suppressed the overlay
   // tool. Nothing pinned it, so the drop was invisible until a live flow broke.
   // These guards make any future _meta/overlay change that removes a tool the
-  // skills/routing layer depends on FAIL HERE, not in production. Add to
-  // LOAD_BEARING when a skill's mcpToolFilter or a routing path starts depending
+  // clients depend on FAIL HERE, not in production. Add to LOAD_BEARING when a
+  // client's tool filter or routing starts depending
   // on a tool whose loss would be silent.
   // -------------------------------------------------------------------------
   const LOAD_BEARING = [
-    // foundation-expert tenant steering (#27828) lists accessible tenants with
-    // this; rpi-admin exposes it. THE tool the regen dropped.
+    // a client's tenant steering lists accessible tenants with this. THE tool
+    // the regen dropped.
     "get_user_client_list",
     "verify_connection", // THE connection/auth check
-    "list_clients", // core client list (rpi-clients)
-    "list_interactions", // rpi-interactions core
-    "summarize_interaction_runs", // run summary (#27897)
-    "get_interaction_run_counts", // run-counts over time (#27957)
-    "list_audiences", // rpi-audiences core
+    "list_clients", // core client list
+    "list_interactions", // core interaction list
+    "summarize_interaction_runs", // run summary
+    "get_interaction_run_counts", // run-counts over time
+    "list_audiences", // core audience list
   ];
 
-  it("exposes every load-bearing tool the skills/routing layer depends on", async () => {
+  it("exposes every load-bearing tool clients depend on", async () => {
     const present = new Set((await callToolsList()).tools.map((t) => t.name));
     const missing = LOAD_BEARING.filter((n) => !present.has(n));
     expect(missing).toEqual([]);
   });
 
-  it("get_user_client_list is present (regen-drop regression, #27957)", async () => {
+  it("get_user_client_list is present (regen-drop regression)", async () => {
     const present = new Set((await callToolsList()).tools.map((t) => t.name));
     expect(present.has("get_user_client_list")).toBe(true);
   });
 
   it("advertises Java-compatible category discovery capabilities on the server", () => {
     // The McpServer stashes registered capabilities on the low-level Server
-    // instance as `_capabilities`. The v3 and RP_AI extractors both read
+    // instance as `_capabilities`. Clients that discover categories read
     // `tools.listTools.{supportsFiltering, availableCategories, filterParameter}`.
     const caps = (
       server.server as unknown as {
@@ -331,7 +331,7 @@ describe("tools/list filtering via live server", () => {
       estimatedToolCount: number;
     }>;
     expect(Array.isArray(categories)).toBe(true);
-    // 8 hand categories + 10 #27634 generated-tool categories (configuration,
+    // 8 hand categories + 10 generated-tool categories (configuration,
     // files, cluster, data-connectors, workflows, operations, data-import,
     // content-preview, jobs, smart-assets) = 18.
     expect(categories.length).toBe(18);

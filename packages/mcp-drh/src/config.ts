@@ -3,10 +3,9 @@ import { z } from "zod";
 /**
  * DRH (Data Readiness Hub / OP-ServicesAPI) MCP server configuration.
  *
- * Mirrors the shape of packages/mcp-rpi/src/config.ts, adapted to DRH's auth
- * model: authentication is Keycloak `signon`/`signoff` (opaque token in the
- * `Authorization` header), and every tool call carries an `X-ClientId` header.
- * `mcp-rpi` is intentionally not refactored into a shared lib (zero-diff).
+ * DRH's auth model: authentication is Keycloak `signon`/`signoff` (opaque token
+ * in the `Authorization` header), and every tool call carries an `X-ClientId`
+ * header.
  */
 export const DRHConfigSchema = z
   .object({
@@ -27,10 +26,10 @@ export const DRHConfigSchema = z
     proxyUser: z.string().min(1).optional(),
     proxyPass: z.string().min(1).optional(),
     /**
-     * Fixed cache TTL (seconds) for the opaque proxy signon token. The
-     * `TokenResponse` carries no `expires_in`, so we cache for a conservative
-     * fixed window and additionally invalidate + re-signon on any 401 (see
-     * DRHApiClient). Env `DRH_TOKEN_TTL_SECONDS`, default 300s.
+     * The FALLBACK cache TTL (seconds) for the proxy sign-on token: the token is
+     * cached for 90% of the sign-on reply's `expiresAfter`, and this applies only
+     * when the reply has no positive `expiresAfter`. Any 401 also invalidates +
+     * re-signons (see DRHApiClient). Env `DRH_TOKEN_TTL_SECONDS`, default 300s.
      */
     tokenTtlSeconds: z.number().int().positive().default(300),
     /** Incoming-request auth gate (enforced by the server middleware). Default ON. */
@@ -52,11 +51,9 @@ export type DRHConfig = z.infer<typeof DRHConfigSchema>;
 export function loadDrhConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): DRHConfig | null {
-  // `DRH_API_URL` (not DRH_INTEGRATION_API_URL): RPI's var says "INTEGRATION"
-  // because that product is literally the "RPI Integration API"; DRH's is the
-  // "OP-ServicesAPI", so the honest name is the generic DRH_API_URL. Env var
-  // names are ours; only the VALUES + wire behavior (Bearer) are dictated by the
-  // DRH backend.
+  // `DRH_API_URL`: DRH's API is the "OP-ServicesAPI", so the name is the generic
+  // DRH_API_URL. Env var names are ours; only the VALUES + wire behavior (Bearer)
+  // are dictated by the DRH backend.
   if (!env.DRH_API_URL || !env.DRH_DEFAULT_CLIENT_ID) return null;
   const proxyEnabled = resolveProxyEnabled(env);
   return DRHConfigSchema.parse({
@@ -76,7 +73,7 @@ export function loadDrhConfigFromEnv(
 }
 
 /**
- * Resolve proxy-enabled state from env (mirrors RPI):
+ * Resolve proxy-enabled state from env:
  *   - DRH_PROXY_ENABLED=false → disabled (creds ignored)
  *   - DRH_PROXY_ENABLED=true  → enabled (requires creds, else error)
  *   - unset                   → enabled iff both DRH_PROXY_USER and DRH_PROXY_PASS are set

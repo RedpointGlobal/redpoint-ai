@@ -7,8 +7,6 @@
  *
  * Path-level helpers (GetResponse, PostResponse, etc.) are available for
  * endpoints where tool paths align with OpenAPI spec paths.
- *
- * Mirrors packages/mcp-rpi/src/client/rpi-types.ts (intentional copy).
  */
 import type { paths, components, operations } from "./drh-api.generated.js";
 

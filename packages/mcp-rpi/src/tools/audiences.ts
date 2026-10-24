@@ -31,8 +31,8 @@ type AudienceExecutionResults =
 // TIMEOUT INVARIANT (do not break): this tool poll budget must be the
 // SMALLEST of the three timeouts in the path so a too-long job fails as a
 // CLEAN tool-timeout error, not a transport socket/abort kill:
-//   this 220s  <  apps/server patched-transport 240s  <  mcp-rpi Bun.serve
-//   idleTimeout 255s (Bun's hard ceiling — the binding constraint).
+//   this 220s  <  the MCP client's transport timeout (240s is typical)  <  this
+//   server's Bun.serve idleTimeout 255s (Bun's hard ceiling — the binding constraint).
 // Was 300 ("matches Java RPI-MCPServer 5 min"): that EXCEEDED both transport
 // timeouts, so a long poll was killed by the transport (silent socket death)
 // instead of erroring cleanly. Do NOT raise back to 300 without first raising

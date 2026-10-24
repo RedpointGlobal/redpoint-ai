@@ -88,7 +88,7 @@ describe("oauth-metadata helpers", () => {
 
 function authApp(discoveryEnabled: boolean) {
   const fakeAuth = {
-    validateToken: async (t: string) => t === "goodtoken",
+    checkToken: async (t: string) => ({ result: t === "goodtoken" ? "valid" : "invalid" }),
   } as unknown as RPIAuthService;
   const app = new Hono();
   app.use("*", createRpiAuthMiddleware(fakeAuth, true, null, discoveryEnabled));

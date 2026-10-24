@@ -27,7 +27,7 @@ const REPORT_PAGE_SIZE = 50;
 // HARD per-call timeout: no single RPI fetch can stall the tool past this. It
 // defends the (good) reports/interaction endpoint against a pathologically
 // large single-page payload — on abort the collector degrades to a partial
-// result rather than hanging past the 240s transport ceiling (#27897).
+// result rather than hanging past the 240s transport ceiling.
 const PER_CALL_TIMEOUT_MS = 10_000;
 
 /** Run `fn` with an AbortSignal that fires after `ms` — a hard per-call ceiling. */
@@ -54,8 +54,8 @@ type ReportSearchResults =
 // TIMEOUT INVARIANT (do not break): this tool poll budget must be the
 // SMALLEST of the three timeouts in the path so a too-long job fails as a
 // CLEAN tool-timeout error, not a transport socket/abort kill:
-//   this 220s  <  apps/server patched-transport 240s  <  mcp-rpi Bun.serve
-//   idleTimeout 255s (Bun's hard ceiling — the binding constraint).
+//   this 220s  <  the MCP client's transport timeout (240s is typical)  <  this
+//   server's Bun.serve idleTimeout 255s (Bun's hard ceiling — the binding constraint).
 // Was 300 ("matches Java RPI-MCPServer 5 min"): that EXCEEDED both transport
 // timeouts, so a long poll was killed by the transport (silent socket death)
 // instead of erroring cleanly. Do NOT raise back to 300 without first raising
@@ -213,7 +213,7 @@ export function registerInteractionTools(
   // Interaction RUNS (workflow instances) — the execution history behind the
   // interactions, powering "runs this month / test vs prod" dashboards.
   //
-  // NOTE: the raw list_interaction_runs tool was REMOVED (#27897) — dumping raw
+  // NOTE: the raw list_interaction_runs tool was REMOVED — dumping raw
   // runs via the super-linear workflow-instances endpoint (probe: 10 rows ~13s,
   // 25 ~20s, 255 → >120s timeout) is unusable. The sole run-data tool is
   // summarize_interaction_runs: 'summary' (default) is built from the fast,
@@ -302,7 +302,7 @@ export function registerInteractionTools(
   );
 
   // =========================================================================
-  // Interaction run COUNTS over time (#27957 / RPI 7.8). Server-side GROUP BY on
+  // Interaction run COUNTS over time (RPI 7.8). Server-side GROUP BY on
   // POST reports/interaction/run-counts → small, date-ordered buckets by time +
   // execution mode. THE data source for a per-day/week/month runs dashboard
   // (replaces the interim daily grind). One fast call, complete, never invents.

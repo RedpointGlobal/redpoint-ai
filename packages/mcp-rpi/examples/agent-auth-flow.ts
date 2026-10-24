@@ -9,7 +9,7 @@
  *   4. Discard the token at the end of the session.
  *
  * Run:
- *   bun run packages/mcp-rpi/examples/agent-auth-flow.ts
+ *   bun run examples/agent-auth-flow.ts
  *
  * Required env (set in the root .env or your shell):
  *   RPI_INTEGRATION_API_URL   Root URL of the RPI Integration API (no /api/v2 suffix)

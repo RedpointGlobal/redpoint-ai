@@ -1,9 +1,8 @@
 /**
  * SSRF guard for the per-request RPI "Environment Location" URL (Phase 1a).
  *
- * mcp-rpi is a STANDALONE compiled binary with no @redpoint-ai/shared dependency
- * (deliberate — keeps the single-file binary portable), so this is a tiny local
- * mirror of packages/shared/src/rpi-url-allowlist.ts. Keep the two in sync.
+ * This server is a STANDALONE compiled binary with no shared dependency (deliberate —
+ * it keeps the single-file binary portable), so the rule lives here.
  *
  * Policy: the URL must be `https:` and its host must equal, or be a subdomain of,
  * an allowlisted registrable domain. Default is EMPTY (secure-by-default +
