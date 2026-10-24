@@ -1,9 +1,13 @@
 import { createMiddleware } from "hono/factory";
+import type { Context } from "hono";
 import { decodeJwt } from "jose";
 import type { RPIAuthService } from "../client/rpi-auth.js";
 import type { OidcVerifier } from "../client/oidc-discovery.js";
 import { wwwAuthenticateChallenge } from "../oauth-metadata.js";
 import { isAllowedRpiUrl } from "../url-allowlist.js";
+import { tooManyRequests } from "../rate-limit.js";
+import type { ValidationAdmission } from "../validation-guard.js";
+import { ownerOf } from "../session-store.js";
 
 /**
  * Does this JWT's UNVERIFIED `iss` match the configured Keycloak issuer? Used ONLY to
@@ -54,7 +58,38 @@ export interface AuthInfo {
 declare module "hono" {
   interface ContextVariableMap {
     authInfo: AuthInfo | undefined;
+    /**
+     * The verified caller, for the per-user budgets: "sub:<issuer>#<subject>" when
+     * the token names its subject, else "token:<sha-256 of the token>". Set only
+     * when a token was verified.
+     */
+    callerKey: string | undefined;
   }
+}
+
+/** The budgets a NEW remote validation must pass (../validation-guard.ts). */
+export interface ValidationBudgets {
+  /** Before a new remote validation; an admission is settled with its answer. */
+  admit(c: Context): ValidationAdmission;
+  /** A presented token failed on an answer this request did not ask RPI for. */
+  failed(c: Context): void;
+}
+
+/**
+ * The caller key for a verified token. Reading the claims unverified is safe here:
+ * the token was just verified (JWKS, or accepted by RPI). An opaque token, or one
+ * without a subject, is keyed by its hash.
+ */
+function callerKeyOf(token: string): string {
+  try {
+    const claims = decodeJwt(token);
+    if (typeof claims.sub === "string" && claims.sub) {
+      return `sub:${normalizeIssuer(typeof claims.iss === "string" ? claims.iss : "")}#${claims.sub}`;
+    }
+  } catch {
+    // not a JWT
+  }
+  return `token:${ownerOf(token)}`;
 }
 
 export function createRpiAuthMiddleware(
@@ -65,6 +100,9 @@ export function createRpiAuthMiddleware(
   // carries the RFC 6750 WWW-Authenticate challenge pointing at the PRM so a
   // spec client can (re)discover the authorization server and connect.
   oauthDiscoveryEnabled = false,
+  // Token mode: the budgets a new remote validation must pass, and where failures
+  // are counted. Absent → validation is unbudgeted (the in-process tests).
+  budgets?: ValidationBudgets | null,
 ) {
   return createMiddleware(async (c, next) => {
     if (!authRequired) {
@@ -118,19 +156,37 @@ export function createRpiAuthMiddleware(
       const result = await oidcVerifier.verifyToken(token);
       if (result.valid) {
         c.set("authInfo", { token, clientId: result.sub, scopes: [], targetUrl });
+        c.set("callerKey", callerKeyOf(token));
         return next();
       }
       // Fall through to validateTokenStatus
     }
 
     // Universal fallback — works for all token types (native, OIDC, Microsoft),
-    // validated against the per-request location when one was given.
-    const valid = await authService.validateToken(token, targetUrl);
-    if (!valid) {
+    // validated against the per-request location when one was given. A cached or
+    // in-flight answer is free; a new remote validation passes the budgets first
+    // (and its admission counts its own failure when RPI answers).
+    let askedRpi = false;
+    const check = await authService.checkToken(
+      token,
+      targetUrl,
+      budgets
+        ? () => {
+            const admission = budgets.admit(c);
+            askedRpi = admission.ok;
+            return admission;
+          }
+        : undefined,
+    );
+    if (check.result === "refused") return tooManyRequests(c, check.retryAfterSec);
+    if (check.result !== "valid") {
+      // RPI unreachable is not the caller's failure; a rejected token is.
+      if (check.result === "invalid" && !askedRpi) budgets?.failed(c);
       return unauthorized("Invalid or expired token");
     }
 
     c.set("authInfo", { token, clientId: "rpi-user", scopes: [], targetUrl });
+    c.set("callerKey", callerKeyOf(token));
     return next();
   });
 }

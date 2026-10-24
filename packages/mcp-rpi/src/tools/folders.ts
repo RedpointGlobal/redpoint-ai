@@ -59,42 +59,72 @@ function toNode(item: FolderItem, parentId: string | null): FolderNode {
  * the all-zero UUID sentinel in `parentFolderID` on subfolder listings —
  * we can't reconstruct the tree from the response payload alone.
  */
+/**
+ * Bounds on the walk, which costs one RPI request per folder: at most
+ * MAX_FOLDERS folders, MAX_DEPTH levels, and WALK_BUDGET_MS in total (under the
+ * 220 s tool budget). Past any of them the walk stops and says so; a folder seen
+ * before is not walked again, so a cycle cannot loop. Exported for tests.
+ */
+export const FOLDER_WALK_LIMITS = { maxFolders: 1000, maxDepth: 32, budgetMs: 150_000 };
+
+export function folderWalkNote(reason: string): string {
+  return `Truncated: the folder walk stopped early (${reason}); the list above is partial. Use nameFilter, or browse a subfolder, to narrow it.`;
+}
+
 async function walkFolderTree(
   rpiClient: RPIApiClient,
   userToken: string | undefined,
   clientId: string | undefined,
   baseUrl: string | undefined,
-): Promise<{ nodes: FolderNode[]; raw: FolderItem[] }> {
+  limits = FOLDER_WALK_LIMITS,
+): Promise<{ nodes: FolderNode[]; raw: FolderItem[]; truncated: string | null }> {
+  const deadline = Date.now() + limits.budgetMs;
+  const remaining = () => AbortSignal.timeout(Math.max(1, deadline - Date.now()));
   const rootResp = await rpiClient.get<FolderItems>(
     userToken,
     "/client/file-system/folders/root-folders",
     undefined,
-    { clientId, verbose: true, baseUrl },
+    { clientId, verbose: true, baseUrl, signal: remaining() },
   );
-  const rootFolders = rootResp.folders ?? [];
+  const rootFolders = (rootResp.folders ?? []).slice(0, limits.maxFolders);
+  let truncated: string | null = (rootResp.folders ?? []).length > limits.maxFolders ? `more than ${limits.maxFolders} folders` : null;
 
   const nodes: FolderNode[] = rootFolders.map((f) => toNode(f, null));
   const raw: FolderItem[] = [...rootFolders];
-  const queue: FolderItem[] = [...rootFolders];
+  const seen = new Set(rootFolders.map((f) => f.id).filter(Boolean));
+  const queue: Array<{ item: FolderItem; depth: number }> = rootFolders.map((item) => ({ item, depth: 1 }));
 
-  while (queue.length > 0) {
-    const next = queue.shift()!;
+  while (queue.length > 0 && !truncated) {
+    const { item: next, depth } = queue.shift()!;
     if (!next.id) continue;
+    if (depth >= limits.maxDepth) {
+      truncated = `deeper than ${limits.maxDepth} levels`;
+      break;
+    }
+    if (Date.now() >= deadline) {
+      truncated = `the ${limits.budgetMs / 1000}s budget ran out`;
+      break;
+    }
     const subResp = await rpiClient.get<FolderItems>(
       userToken,
       "/client/file-system/folders/subfolders",
       { ID: next.id },
-      { clientId, verbose: true, baseUrl },
+      { clientId, verbose: true, baseUrl, signal: remaining() },
     );
-    const subs = subResp.folders ?? [];
-    for (const sub of subs) {
+    for (const sub of subResp.folders ?? []) {
+      if (sub.id && seen.has(sub.id)) continue;
+      if (nodes.length >= limits.maxFolders) {
+        truncated = `more than ${limits.maxFolders} folders`;
+        break;
+      }
+      if (sub.id) seen.add(sub.id);
       raw.push(sub);
       nodes.push(toNode(sub, next.id));
-      queue.push(sub);
+      queue.push({ item: sub, depth: depth + 1 });
     }
   }
 
-  return { nodes, raw };
+  return { nodes, raw, truncated };
 }
 
 export function registerFolderTools(
@@ -133,28 +163,33 @@ export function registerFolderTools(
       const cacheKey = FolderCache.keyFor(userToken, effectiveClientId);
 
       try {
+        // A truncated walk says so in a second block (the first is unchanged) and is not cached.
+        const withNote = (result: ReturnType<typeof jsonContent>, truncated: string | null) =>
+          truncated ? { ...result, content: [...result.content, { type: "text" as const, text: folderWalkNote(truncated) }] } : result;
         if (verbose) {
-          const { raw } = await walkFolderTree(rpiClient, userToken, clientId, targetUrlOf(extra));
+          const { raw, truncated } = await walkFolderTree(rpiClient, userToken, clientId, targetUrlOf(extra));
           const filtered = nameFilter
             ? raw.filter((f) =>
                 (f.name ?? "").toLowerCase().includes(nameFilter.toLowerCase()),
               )
             : raw;
-          return jsonContent(filtered);
+          return withNote(jsonContent(filtered), truncated);
         }
 
         let nodes = folderCache.get(cacheKey);
+        let truncated: string | null = null;
         if (!nodes) {
           const walked = await walkFolderTree(rpiClient, userToken, clientId, targetUrlOf(extra));
           nodes = walked.nodes;
-          folderCache.set(cacheKey, nodes);
+          truncated = walked.truncated;
+          if (!truncated) folderCache.set(cacheKey, nodes);
         }
         const filtered = nameFilter
           ? nodes.filter((n) =>
               n.name.toLowerCase().includes(nameFilter.toLowerCase()),
             )
           : nodes;
-        return jsonContent(filtered);
+        return withNote(jsonContent(filtered), truncated);
       } catch (error) {
         return errorContent("Error listing folders", error);
       }

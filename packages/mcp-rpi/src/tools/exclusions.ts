@@ -1,9 +1,9 @@
 /**
- * Exclusion config for the #27634 GET-tool generator.
+ * Exclusion config for the GET-tool generator.
  *
  * The RPI spec exposes 254 GET operations. This config CUTS 69 of them, leaving
  * **185 in-scope** GETs the generator will emit tools for (once the overlay names
- * them). The cuts are Mark-signed and split into named buckets so the intent is
+ * them). The cuts are signed off and split into named buckets so the intent is
  * auditable and a spec rename that silently un-cuts something trips the count
  * assertion (EXPECTED_IN_SCOPE) at build time.
  *
@@ -13,9 +13,9 @@
  *    6  write-flow enums           — date-part-types, context-keys, json-message-types
  *    4  help/example routes
  *    4  QA/swagger routes
- *    5  mercury + published-content — unrecognized domains (Mark)
+ *    5  mercury + published-content — unrecognized domains (signed off)
  *    1  /swagger/.well-known/openid-configuration — auth plumbing, excluded at wrap time
- *    3  action-shaped GETs         — GET verb but MUTATE state (cuz sweep #27634):
+ *    3  action-shaped GETs         — GET verb but MUTATE state (manual sweep):
  *                                     data-connector /activate + /deactivate, maintenance /stop
  */
 
@@ -56,8 +56,8 @@ const EXCLUSION_BUCKETS: { name: string; match: (path: string, opId: string) => 
       /mercury|published-content|publishedcontent/.test(`${p} ${o}`.toLowerCase()),
   },
   {
-    // Action-shaped GETs: declared GET but the endpoint MUTATES state (cuz sweep,
-    // #27634). GET-only is the read-surface invariant, so these are cut. Matched by
+    // Action-shaped GETs: declared GET but the endpoint MUTATES state (manual sweep).
+    // GET-only is the read-surface invariant, so these are cut. Matched by
     // path so an operationId rename can't silently re-admit them. See VERIFIED_READ
     // in generate-tools.ts (Guard 3) for verb-hits that ARE genuine reads.
     name: "action-shaped-gets",
@@ -88,7 +88,7 @@ export function isExcluded(path: string, operationId: string): boolean {
  * in the 185 in-scope total) and from hand-covered (same endpoint). The generator
  * counts these as "suppressed" so the finish arithmetic is explicit:
  *   in-scope = authored + hand-covered + suppressed + awaiting.
- * All confirmed against the real hand tools (cuz to ratify at the audience domain).
+ * All confirmed against the real hand tools (to ratify at the audience domain).
  */
 export const SUPPRESSED_DUPLICATES: Record<string, string> = {
   // get one audience definition by id — the hand get_audience_definition_by_id

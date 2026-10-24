@@ -37,22 +37,50 @@ const VALIDATION_CACHE_TTL_MS = 30_000; // 30 seconds
 // MCP transport's own budget is far larger). Well over a healthy call, well under any
 // probe/transport fuse. On timeout the token is treated as a CLEAN validation failure.
 const VALIDATION_FETCH_TIMEOUT_MS = 8_000;
+/** The validation cache holds at most this many tokens; the least recently used goes first. */
+export const MAX_VALIDATION_CACHE_ENTRIES = 10_000;
+
+/** A token check's answer. "unavailable": RPI didn't answer (not cached); "refused": the admission said no. */
+export type TokenCheck =
+  | { result: "valid" }
+  | { result: "invalid" }
+  | { result: "unavailable" }
+  | { result: "refused"; retryAfterSec: number };
+/**
+ * Asked once before a NEW remote validation (never for a cached or in-flight one).
+ * An admission's `settle` is told the validation's answer when it arrives.
+ */
+export type RemoteAdmission = () =>
+  | { ok: true; settle?(result: TokenCheck["result"]): void }
+  | { ok: false; retryAfterSec: number };
 const MIN_TOKEN_TTL_SECONDS = 60;
+/** The bound on the boot-time proxy login check. */
+export const PROXY_LOGIN_CHECK_TIMEOUT_MS = 15_000;
+
+/** RPI's token endpoint REFUSED the proxy user's credentials (as opposed to not answering). */
+export class ProxyLoginRejected extends Error {}
+
+/** The proxy user's login, tried once at boot: accepted, refused by RPI, or RPI not answering. */
+export type ProxyLoginStatus = "ok" | "rejected" | "unreachable";
 
 export class RPIAuthService {
   private baseUrl: string;
   private proxyUser?: string;
   private proxyPass?: string;
-  private oauthClientId: string;
-  private oauthClientSecret: string;
+  // Absent in login-only mode (AUTH_REQUIRED=true, proxy off): every call then
+  // carries the caller's own token, and minting one here fails by name.
+  private oauthClientId?: string;
+  private oauthClientSecret?: string;
   private proxyToken: CachedToken | null = null;
   private refreshPromise: Promise<CachedToken> | null = null;
   private validationCache = new Map<string, ValidationCacheEntry>();
+  /** One remote validation per (base, token) at a time; concurrent callers share it. */
+  private validationsInFlight = new Map<string, Promise<TokenCheck>>();
 
   constructor(
     baseUrl: string,
-    oauthClientId: string,
-    oauthClientSecret: string,
+    oauthClientId: string | undefined,
+    oauthClientSecret: string | undefined,
     proxyUser?: string,
     proxyPass?: string,
   ) {
@@ -62,6 +90,16 @@ export class RPIAuthService {
     this.oauthClientSecret = oauthClientSecret;
     this.proxyUser = proxyUser;
     this.proxyPass = proxyPass;
+  }
+
+  /** The RPI OAuth client mints tokens (password / refresh grants); absent → a named error, never a request. */
+  private requireOauthClient(what: string): { client_id: string; client_secret: string } {
+    if (!this.oauthClientId || !this.oauthClientSecret) {
+      throw new Error(
+        `RPI_OAUTH_CLIENT_ID / RPI_OAUTH_CLIENT_SECRET are not set — ${what} is unavailable (login-only mode: every call must carry the caller's own RPI token).`,
+      );
+    }
+    return { client_id: this.oauthClientId, client_secret: this.oauthClientSecret };
   }
 
   get proxyEnabled(): boolean {
@@ -104,6 +142,7 @@ export class RPIAuthService {
    * The result is NOT cached — callers manage their own session.
    */
   async loginUser(username: string, password: string): Promise<TokenResponse> {
+    const oauthClient = this.requireOauthClient("native password login");
     const response = await fetch(`${this.baseUrl}/connect/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -111,8 +150,7 @@ export class RPIAuthService {
         grant_type: "password",
         username,
         password,
-        client_id: this.oauthClientId,
-        client_secret: this.oauthClientSecret,
+        ...oauthClient,
       }),
     });
 
@@ -135,14 +173,14 @@ export class RPIAuthService {
    * loginUser() with stored credentials, or prompt the user to reauthenticate.
    */
   async refreshUserToken(refreshToken: string): Promise<TokenResponse> {
+    const oauthClient = this.requireOauthClient("token refresh");
     const response = await fetch(`${this.baseUrl}/connect/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: refreshToken,
-        client_id: this.oauthClientId,
-        client_secret: this.oauthClientSecret,
+        ...oauthClient,
       }),
     });
 
@@ -161,6 +199,16 @@ export class RPIAuthService {
    * Results are cached for 30 seconds keyed by token hash.
    */
   async validateToken(token: string, targetBase?: string): Promise<boolean> {
+    return (await this.checkToken(token, targetBase)).result === "valid";
+  }
+
+  /**
+   * validateToken with the whole answer. A cached answer is returned as is; a token
+   * already being validated joins that validation (single-flight: N concurrent
+   * requests with one token → one RPI call); only a NEW remote validation asks
+   * `admit` first, and a refusal is returned without calling RPI.
+   */
+  async checkToken(token: string, targetBase?: string, admit?: RemoteAdmission): Promise<TokenCheck> {
     // Validate against the per-request Environment Location when given, else the
     // construction-time default. Normalise like the constructor (strip /api/v2 +
     // trailing slash). Cache is keyed by (base, token) so the same token isn't
@@ -172,9 +220,31 @@ export class RPIAuthService {
 
     const cached = this.validationCache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt) {
-      return cached.valid;
+      // Re-insert → most recently used.
+      this.validationCache.delete(cacheKey);
+      this.validationCache.set(cacheKey, cached);
+      return { result: cached.valid ? "valid" : "invalid" };
     }
 
+    let pending = this.validationsInFlight.get(cacheKey);
+    if (!pending) {
+      const admission = admit?.();
+      if (admission && !admission.ok) return { result: "refused", retryAfterSec: admission.retryAfterSec };
+      const settle = admission?.settle;
+      const started = this.validateRemotely(token, base, cacheKey).then(
+        (check) => (settle?.(check.result), check),
+        (error) => {
+          settle?.("unavailable");
+          throw error;
+        },
+      );
+      pending = started.finally(() => this.validationsInFlight.delete(cacheKey));
+      this.validationsInFlight.set(cacheKey, pending);
+    }
+    return pending;
+  }
+
+  private async validateRemotely(token: string, base: string, cacheKey: string): Promise<TokenCheck> {
     let valid: boolean;
     try {
       const response = await fetch(
@@ -189,20 +259,30 @@ export class RPIAuthService {
       // Timed out (VALIDATION_FETCH_TIMEOUT_MS) or a network error — treat as a CLEAN
       // validation failure rather than a hang, and do NOT cache it: a transient stall must
       // not lock the token out for the full 30s TTL, so the next request retries fresh.
-      return false;
+      return { result: "unavailable" };
     }
 
+    this.validationCache.delete(cacheKey);
     this.validationCache.set(cacheKey, {
       valid,
       expiresAt: Date.now() + VALIDATION_CACHE_TTL_MS,
     });
 
-    // Prune expired entries periodically
+    // Prune expired entries periodically; past the cap, drop the least recently used.
     if (this.validationCache.size > 100) {
       this.pruneValidationCache();
     }
+    for (const key of this.validationCache.keys()) {
+      if (this.validationCache.size <= MAX_VALIDATION_CACHE_ENTRIES) break;
+      this.validationCache.delete(key);
+    }
 
-    return valid;
+    return { result: valid ? "valid" : "invalid" };
+  }
+
+  /** How many tokens the validation cache holds (tests). */
+  get validationCacheSize(): number {
+    return this.validationCache.size;
   }
 
   /**
@@ -224,23 +304,37 @@ export class RPIAuthService {
     return Array.isArray(body) ? body : body.settings ?? [];
   }
 
-  private async fetchToken(): Promise<CachedToken> {
+  /**
+   * Try the proxy user's login once (boot): "rejected" when RPI's token endpoint
+   * refuses the credentials (HTTP 400/401/403), "unreachable" for anything else
+   * (no answer, a timeout, a server error). A success caches the token.
+   */
+  async checkProxyLogin(timeoutMs: number = PROXY_LOGIN_CHECK_TIMEOUT_MS): Promise<ProxyLoginStatus> {
+    try {
+      await this.fetchToken(AbortSignal.timeout(timeoutMs));
+      return "ok";
+    } catch (error) {
+      return error instanceof ProxyLoginRejected ? "rejected" : "unreachable";
+    }
+  }
+
+  private async fetchToken(signal?: AbortSignal): Promise<CachedToken> {
+    const oauthClient = this.requireOauthClient("the proxy user's token");
     const response = await fetch(`${this.baseUrl}/connect/token`, {
       method: "POST",
+      signal,
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "password",
         username: this.proxyUser!,
         password: this.proxyPass!,
-        client_id: this.oauthClientId,
-        client_secret: this.oauthClientSecret,
+        ...oauthClient,
       }),
     });
 
     if (!response.ok) {
-      throw new Error(
-        `RPI token request failed: ${safeErrorDetail(response.status, response.statusText)}`,
-      );
+      const message = `RPI token request failed: ${safeErrorDetail(response.status, response.statusText)}`;
+      throw [400, 401, 403].includes(response.status) ? new ProxyLoginRejected(message) : new Error(message);
     }
 
     const data = (await response.json()) as TokenResponse;

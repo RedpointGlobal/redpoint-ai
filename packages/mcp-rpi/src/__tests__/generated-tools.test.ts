@@ -9,7 +9,7 @@ import { OVERLAY } from "../tools/overlay.js";
 // is caught by `generate:tools:check`).
 const genDir = resolve(dirname(fileURLToPath(import.meta.url)), "../tools/generated");
 
-describe("generated tool output (#27634)", () => {
+describe("generated tool output", () => {
   it("emits a DO-NOT-EDIT category file for the seed's category", () => {
     const seed = OVERLAY.GetAttributeLists;
     const file = resolve(genDir, `${seed.category}.ts`);

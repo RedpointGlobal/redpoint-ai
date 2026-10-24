@@ -111,13 +111,14 @@ describe("auth-scope · classifyToolError", () => {
     expect(r?.content[0].text).toMatch(/sign in/i);
     expect(r?.content[0].text).not.toMatch(/boom/); // no raw body/detail
   });
-  it("403 · admin tool → 'not available for your role'", () => {
+  it("403 · admin tool → names the caller's RPI account and the cluster-admin right", () => {
     const r = classifyToolError(new RpiApiError(403, "boom"), "list_clients");
-    expect(r?.content[0].text).toMatch(/not available for your role/i);
+    expect(r?.content[0].text).toBe("Your RPI account does not have permission for this operation (it needs cluster-admin rights).");
   });
-  it("403 · user tool → 'not authorized'", () => {
+  it("403 · user tool → the caller's RPI account is not authorized (never a 'service account')", () => {
     const r = classifyToolError(new RpiApiError(403, "boom"), "list_audiences");
-    expect(r?.content[0].text).toMatch(/not authorized/i);
+    expect(r?.content[0].text).toBe("Your RPI account is not authorized to access this resource.");
+    expect(r?.content[0].text).not.toMatch(/service account/i);
   });
   it("500 → null (rethrow, not softened)", () => {
     expect(classifyToolError(new RpiApiError(500, "boom"), "list_audiences")).toBeNull();

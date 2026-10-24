@@ -7,8 +7,6 @@
  * (tool-filter.ts) would leave them callable — this verifies the SDK `.disable()`
  * path, which blocks both. The two allowlisted job tools (selection-rule
  * count/waterfall, kept as accepted risk) must stay listed and callable.
- *
- * Mirrors packages/mcp-drh/src/__tests__/write-enforcement.test.ts.
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { createRPIMcpServer } from "../server.js";

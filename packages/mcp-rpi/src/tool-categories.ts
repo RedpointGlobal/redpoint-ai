@@ -6,6 +6,7 @@
  * Filtering is applied in server.ts when clients pass a `category` or `names`
  * param on `tools/list`.
  */
+import { auditLine } from "./tool-audit.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   resolveToolAuth,
@@ -23,7 +24,7 @@ export const TOOL_CATEGORIES = [
   "folders",
   "interactions",
   "selection-rules",
-  // Generated-tool categories (#27634). Each new domain adds its category here +
+  // Generated-tool categories. Each new domain adds its category here +
   // a CATEGORY_DESCRIPTIONS entry (compile-gated) as its overlay lands.
   "configuration",
   "files",
@@ -75,12 +76,22 @@ export function createToolRegistrar(
         unknown
       >,
     ) => unknown;
+    // (3) One structured audit line per call (./tool-audit.ts) — outcome, duration,
+    //     the principal (a token hash, or rpi-native:<account> for a token-less call), argument NAMES only.
     const wrapped = async (args: unknown, extra: Parameters<typeof origHandler>[1]) => {
+      const started = performance.now(); // monotonic: the wall clock can step
+      const callerToken = extra?.authInfo?.token;
+      const audit = (outcome: "ok" | "error" | "denied") =>
+        console.error(auditLine({ token: callerToken, tool: name, args, outcome, durationMs: Math.round(performance.now() - started) }));
       let token: string;
       try {
         token = await resolveToolAuth(name, extra?.authInfo?.token);
       } catch (e) {
-        if (e instanceof ScopeAuthError) return handleScopeAuthError(e);
+        if (e instanceof ScopeAuthError) {
+          audit("denied");
+          return handleScopeAuthError(e);
+        }
+        audit("error");
         throw e;
       }
       const injectedExtra = {
@@ -88,8 +99,11 @@ export function createToolRegistrar(
         authInfo: { ...(extra?.authInfo ?? {}), token },
       };
       try {
-        return await origHandler(args, injectedExtra);
+        const result = await origHandler(args, injectedExtra);
+        audit((result as { isError?: boolean } | undefined)?.isError ? "error" : "ok");
+        return result;
       } catch (e) {
+        audit("error");
         const graceful = classifyToolError(e, name);
         if (graceful) return graceful;
         throw e;

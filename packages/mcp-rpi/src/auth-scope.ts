@@ -165,8 +165,8 @@ export function classifyToolError(
   }
   if (status === 403) {
     return scopeOf(toolName) === "admin"
-      ? toolError("This operation is not available for your role.")
-      : toolError("You are not authorized to access this resource.");
+      ? toolError("Your RPI account does not have permission for this operation (it needs cluster-admin rights).")
+      : toolError("Your RPI account is not authorized to access this resource.");
   }
   return null;
 }

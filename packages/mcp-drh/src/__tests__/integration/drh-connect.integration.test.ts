@@ -5,7 +5,7 @@
  * read-only DRHApiClient call along the path the DRH team outlined
  * (GET /api-op/v1/databases/{id}/sources).
  *
- * Gating: skips only when DRH env is absent (mirrors rpi-connect) — so OSS/CI
+ * Gating: skips only when DRH env is absent — so OSS/CI
  * without DRH creds is unaffected. When creds ARE present it RUNS and passes:
  * the proxy service account signs on (Keycloak → opaque token) and the
  * read-only GET returns a response with Bearer + X-ClientId. This is the live
@@ -19,7 +19,7 @@ import { DRHAuthService } from "../../client/drh-auth.js";
 import { DRHApiClient } from "../../client/drh-api.js";
 import { resolveProxyEnabled } from "../../config.js";
 
-// Mirror the root-.env loader used by http.ts so this file works regardless of
+// The same .env loader http.ts uses so this file works regardless of
 // which cwd bun test runs from.
 const __testsDir = dirname(fileURLToPath(import.meta.url));
 const rootEnv = join(__testsDir, "../../../../../.env");

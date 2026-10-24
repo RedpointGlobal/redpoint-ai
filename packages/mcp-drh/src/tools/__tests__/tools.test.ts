@@ -42,7 +42,7 @@ function installFetch() {
   apiCalls = [];
   globalThis.fetch = mock(async (url: string, init?: RequestInit) => {
     if (String(url).includes("/auth/signon"))
-      return new Response(JSON.stringify({ token: "proxy-1" }), { status: 200 });
+      return new Response(JSON.stringify({ accessToken: "proxy-1" }), { status: 200 });
     apiCalls.push({
       url: String(url),
       method: (init?.method || "GET").toUpperCase(),
@@ -269,7 +269,7 @@ describe("DRH tools (databases + sources + auth)", () => {
   it("subject-areas: columns returns raw CSV text", async () => {
     globalThis.fetch = mock(async (url: string) => {
       if (String(url).includes("/auth/signon"))
-        return new Response(JSON.stringify({ token: "proxy-1" }), { status: 200 });
+        return new Response(JSON.stringify({ accessToken: "proxy-1" }), { status: 200 });
       return new Response("col\nval", { status: 200 });
     }) as unknown as typeof fetch;
     const tools = build();
@@ -346,7 +346,7 @@ describe("DRH tools (databases + sources + auth)", () => {
   it("feeds: get_feed_columns returns raw CSV text (not JSON-wrapped)", async () => {
     globalThis.fetch = mock(async (url: string) => {
       if (String(url).includes("/auth/signon"))
-        return new Response(JSON.stringify({ token: "proxy-1" }), { status: 200 });
+        return new Response(JSON.stringify({ accessToken: "proxy-1" }), { status: 200 });
       return new Response("colA,colB\n1,2", { status: 200 });
     }) as unknown as typeof fetch;
     const tools = build();

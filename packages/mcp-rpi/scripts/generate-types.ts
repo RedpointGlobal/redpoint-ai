@@ -14,10 +14,9 @@ import { sanitizeGeneratedTypes } from "./sanitize-generated.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outputPath = resolve(__dirname, "../src/client/rpi-api.generated.ts");
 
-// Load the root .env — the single source of truth. Bun only auto-loads .env from
-// the cwd, which is packages/mcp-rpi when this runs via the workspace filter, so
-// root vars (RPI_INTEGRATION_API_URL, RPI_OPENAPI_SPEC) would otherwise be unseen.
-// Same manual-parse pattern as apps/server/src/index.ts; existing env wins.
+// Load the repo's .env — the single source of truth. Bun only auto-loads .env from
+// the cwd, which may differ, so its vars (RPI_INTEGRATION_API_URL, RPI_OPENAPI_SPEC) would otherwise be unseen.
+// Manual .env parse; existing env wins.
 const rootEnv = resolve(__dirname, "../../../.env");
 if (existsSync(rootEnv)) {
   for (const line of readFileSync(rootEnv, "utf8").split("\n")) {

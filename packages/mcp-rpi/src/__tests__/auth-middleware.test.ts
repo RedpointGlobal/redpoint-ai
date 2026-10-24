@@ -10,7 +10,7 @@ import type { OidcVerifier, OidcVerifyResult } from "../client/oidc-discovery.js
 
 function createMockAuthService(validateResult = true): RPIAuthService {
   return {
-    validateToken: mock(() => Promise.resolve(validateResult)),
+    checkToken: mock(() => Promise.resolve({ result: validateResult ? "valid" : "invalid" })),
     getProxyToken: () => Promise.resolve("proxy-token"),
     getLoginSettings: () => Promise.resolve([]),
     loginUser: () =>
@@ -98,7 +98,7 @@ describe("auth middleware", () => {
 
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
-      expect(authService.validateToken).not.toHaveBeenCalled();
+      expect(authService.checkToken).not.toHaveBeenCalled();
     });
   });
 
@@ -150,7 +150,7 @@ describe("auth middleware", () => {
       expect(status).toBe(200);
       expect(body.authInfo.clientId).toBe("oidc-user-123");
       expect(oidcVerifier.verifyToken).toHaveBeenCalledTimes(1);
-      expect(authService.validateToken).not.toHaveBeenCalled();
+      expect(authService.checkToken).not.toHaveBeenCalled();
     });
 
     it("falls back to validateTokenStatus when JWKS fails", async () => {
@@ -165,7 +165,7 @@ describe("auth middleware", () => {
       expect(status).toBe(200);
       expect(body.authInfo.clientId).toBe("rpi-user"); // fell through to validateToken
       expect(oidcVerifier.verifyToken).toHaveBeenCalledTimes(1);
-      expect(authService.validateToken).toHaveBeenCalledTimes(1);
+      expect(authService.checkToken).toHaveBeenCalledTimes(1);
     });
 
     it("returns 401 when both JWKS and validateTokenStatus fail", async () => {
@@ -192,11 +192,11 @@ describe("auth middleware", () => {
       expect(status).toBe(200);
       expect(body.authInfo.clientId).toBe("rpi-user"); // used validateToken, not JWKS
       expect(oidcVerifier.verifyToken).not.toHaveBeenCalled();
-      expect(authService.validateToken).toHaveBeenCalledTimes(1);
+      expect(authService.checkToken).toHaveBeenCalledTimes(1);
     });
   });
 
-  // #28066 fix — issuer gate: only a Keycloak-issued JWT gets the (slow, remote) JWKS
+  // Issuer gate: only a Keycloak-issued JWT gets the (slow, remote) JWKS
   // crypto verify; a native RPI JWT (its own IdentityServer issuer) SKIPS it and is
   // authorized by validateToken. Kills the doomed 5000ms-ceiling JWKS refetch on the
   // native path. These assert BOTH the fast path AND the security invariant (an SSO token
@@ -209,7 +209,7 @@ describe("auth middleware", () => {
       const { status, body } = await request(app, jwtWithIssuer(RPI_ISSUER));
       expect(status).toBe(200);
       expect(oidcVerifier.verifyToken).not.toHaveBeenCalled(); // no doomed JWKS fetch
-      expect(authService.validateToken).toHaveBeenCalledTimes(1);
+      expect(authService.checkToken).toHaveBeenCalledTimes(1);
       expect(body.authInfo.clientId).toBe("rpi-user");
     });
 
@@ -220,7 +220,7 @@ describe("auth middleware", () => {
       const { status, body } = await request(app, jwtWithIssuer(KEYCLOAK_ISSUER));
       expect(status).toBe(200);
       expect(oidcVerifier.verifyToken).toHaveBeenCalledTimes(1); // crypto verify ran
-      expect(authService.validateToken).not.toHaveBeenCalled();
+      expect(authService.checkToken).not.toHaveBeenCalled();
       expect(body.authInfo.clientId).toBe("oidc-user-123");
     });
 
@@ -295,7 +295,7 @@ describe("auth middleware", () => {
       expect(status).toBe(200);
       expect(body.authInfo.targetUrl).toBe(ALLOWED);
       // validateToken received the per-request base (rep's instance).
-      expect(authService.validateToken).toHaveBeenCalledWith("tok", ALLOWED);
+      expect(authService.checkToken).toHaveBeenCalledWith("tok", ALLOWED, undefined);
     });
 
     it("non-allowlisted X-RPI-URL → 400, token never validated (never connects)", async () => {
@@ -305,7 +305,7 @@ describe("auth middleware", () => {
         "X-RPI-URL": "https://evil.attacker.com",
       });
       expect(status).toBe(400);
-      expect(authService.validateToken).not.toHaveBeenCalled();
+      expect(authService.checkToken).not.toHaveBeenCalled();
     });
 
     it("non-https X-RPI-URL → 400", async () => {
@@ -323,7 +323,7 @@ describe("auth middleware", () => {
       const { status, body } = await request(app, "tok");
       expect(status).toBe(200);
       expect(body.authInfo.targetUrl).toBeUndefined();
-      expect(authService.validateToken).toHaveBeenCalledWith("tok", undefined);
+      expect(authService.checkToken).toHaveBeenCalledWith("tok", undefined, undefined);
     });
   });
 });

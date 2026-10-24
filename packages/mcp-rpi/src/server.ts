@@ -1,3 +1,4 @@
+import { MCP_RPI_VERSION } from "./version.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { RPIApiClient } from "./client/rpi-api.js";
 import type { RPIAuthService } from "./client/rpi-auth.js";
@@ -10,7 +11,7 @@ import { registerFolderTools } from "./tools/folders.js";
 import { registerInteractionTools } from "./tools/interactions.js";
 import { registerSelectionRuleTools } from "./tools/selection-rules.js";
 import type { OidcVerifier } from "./client/oidc-discovery.js";
-import type { RPIConfig } from "./config.js";
+import type { RPIServerConfig } from "./config.js";
 import { installToolFilter } from "./tool-filter.js";
 import { normalizeEndpoint } from "./endpoint-path.js";
 import { registerGeneratedTools } from "./tools/generated/index.js";
@@ -26,7 +27,7 @@ import { initAuthScope } from "./auth-scope.js";
 export const MAX_TOOL_INPUT_ELEMENTS = 10_000;
 
 export function createRPIMcpServer(
-  rpiConfig: RPIConfig,
+  rpiConfig: RPIServerConfig,
   authService: RPIAuthService,
   oidcVerifier?: OidcVerifier | null,
   // The running instance's served endpoint-set (normalized), fetched once at boot.
@@ -36,7 +37,7 @@ export function createRPIMcpServer(
   const server = new McpServer(
     {
       name: "rpi-mcp-server",
-      version: "0.1.0",
+      version: MCP_RPI_VERSION,
     },
     { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
   );
@@ -63,7 +64,7 @@ export function createRPIMcpServer(
   registerFolderTools(server, rpiClient);
   registerInteractionTools(server, rpiClient);
   registerSelectionRuleTools(server, rpiClient);
-  // Generated (spec-derived) read-only tools — #27634. Additive to the 47 above;
+  // Generated (spec-derived) read-only tools. Additive to the 47 above;
   // masked + write-gated by the same sweeps below.
   registerGeneratedTools(server, rpiClient);
 
@@ -80,8 +81,8 @@ export function createRPIMcpServer(
 // Write-tool enforcement — unconditional, no env toggle by design.
 //
 // The standalone MCP binaries expose the raw registered tool surface to any
-// authenticated MCP client: no skills, no mcpToolFilter, so the orchestrator's
-// read-only posture is bypassed entirely and an authenticated caller can invoke
+// authenticated MCP client, with no tool filtering in front of it, so a client's
+// own read-only posture would be bypassed entirely and an authenticated caller can invoke
 // any registered tool. This sweep disables every tool that declares itself a
 // write (annotations.readOnlyHint === false) so it is absent from tools/list AND
 // rejected on tools/call by the SDK's CallTool handler
@@ -136,7 +137,7 @@ function disableWriteTools(server: McpServer): void {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime endpoint mask (#27634) — superset-at-build / mask-at-runtime.
+// Runtime endpoint mask — superset-at-build / mask-at-runtime.
 //
 // The server ships a curated GET-tool superset compiled in. At boot the host
 // fetches the RUNNING instance's OpenAPI spec (fetchInstanceSpec) and passes

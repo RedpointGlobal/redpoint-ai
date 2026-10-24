@@ -60,7 +60,7 @@ The MCP server compiles into a single self-contained binary per platform via Bun
 ### Prerequisites for the build machine
 
 - Git
-- [Bun](https://bun.sh) 1.x
+- [Bun](https://bun.sh) 1.4.4 or later. A compiled binary carries the CA bundle of the Bun that built it, and Bun before 1.4.4 still trusts emSign ECC Root CA - G3, a root distrusted after its signing key was compromised. The images build with a digest-pinned Bun at or above 1.4.4 (`scripts/__tests__/pinned-bun.test.ts`); a binary built on your machine uses your Bun.
 
 ### Build
 

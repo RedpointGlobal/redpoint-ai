@@ -16,7 +16,7 @@ export function registerAuthTools(
   registerTool(
     "verify_connection",
     {
-      // NOTE (#27957 regen): _meta.endpoints is DUAL-USE — the runtime mask reads it
+      // NOTE (regen): _meta.endpoints is DUAL-USE — the runtime mask reads it
       // (server.ts), AND the tool generator's deriveHandEndpoints treats every listed
       // endpoint as HAND-COVERED (suppressing any overlay tool for it). verify_connection
       // only PROBES /authentication/user-client-list; the real LIST tool is the
@@ -89,7 +89,7 @@ export function registerAuthTools(
       // it needs only a valid token and returns 200 for ANY authenticated user, so
       // it is the true connected/auth signal even on a multi-tenant instance before
       // a tenant is chosen. (The old probe hit tenant-scoped /info/version with no
-      // X-ClientID → a false 401 for reps who hadn't picked a tenant — #27895.)
+      // X-ClientID → a false 401 for reps who hadn't picked a tenant.)
       try {
         await rpiClient.get(userToken, "/authentication/user-client-list", undefined, {
           baseUrl: targetUrlOf(extra),

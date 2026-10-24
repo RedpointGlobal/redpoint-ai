@@ -24,7 +24,7 @@ describe("exclusion config", () => {
     expect(exclusionReason("/swagger/.well-known/openid-configuration", "")).toBe("qa-swagger");
   });
 
-  it("cuts action-shaped GETs (GET verb but mutate state) — cuz sweep #27634", () => {
+  it("cuts action-shaped GETs (GET verb but mutate state)", () => {
     expect(exclusionReason("/api/v2/client/data-connector/activate", "ListSyncInfoActivate")).toBe(
       "action-shaped-gets",
     );

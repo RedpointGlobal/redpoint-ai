@@ -4,7 +4,7 @@
  * connect under AUTH_REQUIRED=true via standard MCP OAuth (discover → DCR →
  * PKCE → token → connect).
  *
- * DELIBERATE DESIGN DECISION — "soft audience" (Option A, confirmed by Mark
+ * DELIBERATE DESIGN DECISION — "soft audience" (Option A, confirmed
  * 2026-08-12; the Mechanism-A design flag):
  *   mcp-rpi is RPI's own gateway — it validates the caller's RPI token and
  *   FORWARDS it to the RPI Integration API for per-user RBAC (see

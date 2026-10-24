@@ -1,5 +1,5 @@
 /**
- * The OVERLAY for the #27634 GET-tool generator — hand-authored quality (names,
+ * The OVERLAY for the GET-tool generator — hand-authored quality (names,
  * categories, descriptions) keyed by the spec's stable `operationId`. The generator
  * joins each in-scope GET to its overlay entry; a GET with no entry emits a
  * build-time "missing overlay" warning and no tool. Step 4+ authors the ~159
@@ -11,7 +11,7 @@ export interface OverlayEntry {
   toolName: string;
   /** ToolCategory — must exist in TOOL_CATEGORIES + CATEGORY_DESCRIPTIONS. */
   category: string;
-  /** Hand-written, DRH-quality description (the spec's are boilerplate). */
+  /** Hand-written description, to the hand-authored tools' standard (the spec's are boilerplate). */
   description: string;
 }
 
@@ -470,7 +470,7 @@ export const OVERLAY: Record<string, OverlayEntry> = {
   },
 
   // ======================================================================
-  // Domain: files (#27634). The CONTENT-FILE objects under /client/files/*
+  // Domain: files. The CONTENT-FILE objects under /client/files/*
   // (decision rules, analysis panels, digital assets, offers, dashboards,
   // etc.) — distinct from "file-system" (folders/metadata). Grouped by
   // CONFUSABLE CLUSTER; the retail flat menu has no router, so each
@@ -691,11 +691,11 @@ export const OVERLAY: Record<string, OverlayEntry> = {
   },
 
   // ======================================================================
-  // Domain: cluster (#27634). Cluster-LEVEL administration reads (span all
+  // Domain: cluster. Cluster-LEVEL administration reads (span all
   // clients) — users, external users, plugins, per-client auxiliary DBs, and
   // cluster logs/tasks. Complements the hand "admin" category (health, API
   // error log, audit history). Grouped by CONFUSABLE CLUSTER.
-  //   SKIPPED (functional dup, flagged to cuz): GetClusterClient
+  //   SKIPPED (functional dup): GetClusterClient
   //   (/cluster/operations/client?ID=) — same purpose as the hand tool
   //   get_client_by_id (/cluster/operations/clients + client-side filter),
   //   different endpoint. Not authored, mirroring the GetAudienceDefinition skip.
@@ -790,7 +790,7 @@ export const OVERLAY: Record<string, OverlayEntry> = {
   },
 
   // ======================================================================
-  // Domain: data-connectors (#27634). Reads for data-connector syncs (client
+  // Domain: data-connectors. Reads for data-connector syncs (client
   // scope). The activate/deactivate ACTIONS are excluded (action-shaped GETs).
   // ======================================================================
   GetListSynchDefinition: {
@@ -807,7 +807,7 @@ export const OVERLAY: Record<string, OverlayEntry> = {
   },
 
   // ======================================================================
-  // Domain: file-system (#27634). The FILING metadata around stored files —
+  // Domain: file-system. The FILING metadata around stored files —
   // a file's own metadata/history/dependencies (category "file-system") and the
   // folder/path tree that contains them (category "folders"). Reuses the two
   // existing hand categories, NOT a new one.
@@ -863,7 +863,7 @@ export const OVERLAY: Record<string, OverlayEntry> = {
   // --- Cluster: folder reads (containers in the path tree). Confusable axis:
   //     by-id vs by-full-path, and folder PROPERTIES vs CONTENTS vs PERMISSIONS.
   //     Cross-ref the list_folders hand tool (the whole tree).
-  //     SKIPPED (PERMANENT — ratified by Mark 2026-08-08; do NOT re-derive):
+  //     SKIPPED (PERMANENT — ratified 2026-08-08; do NOT re-derive):
   //     GetFolder (GET /client/file-system/folder) — its PATH is owned by the hand
   //     create_folder (POST same path). The skip-set is method-agnostic (plain
   //     normalized-path matching) BY DESIGN and stays that way: guards stay
@@ -903,7 +903,7 @@ export const OVERLAY: Record<string, OverlayEntry> = {
   },
 
   // ======================================================================
-  // Domain: workflows (#27634). Runtime execution TELEMETRY for a workflow run
+  // Domain: workflows. Runtime execution TELEMETRY for a workflow run
   // (a "workflow-association instance") and its activities — logs, results,
   // assets, SQL traces, summaries. Category "workflows". Complements (does not
   // duplicate) the hand tools that report workflow STATUS/SUMMARY, which live in
@@ -983,7 +983,7 @@ export const OVERLAY: Record<string, OverlayEntry> = {
   },
 
   // ======================================================================
-  // Domain: operations (#27634). CLIENT-scoped operational reads — the
+  // Domain: operations. CLIENT-scoped operational reads — the
   // client/tenant counterparts to the cluster-scoped reads (category "cluster")
   // and the admin hand tools. Every log/task read names its scope (client) and
   // cross-refs the cluster-wide equivalent so the two don't blur.
@@ -1037,7 +1037,7 @@ export const OVERLAY: Record<string, OverlayEntry> = {
   },
 
   // ======================================================================
-  // Domain: remainder (#27634) — the last small areas. Singletons fold into the
+  // Domain: remainder — the last small areas. Singletons fold into the
   // existing auth/configuration categories; coherent pairs/quads get their own
   // small categories (data-import, content-preview, jobs, smart-assets). This
   // clears the awaiting list to 0.

@@ -1,7 +1,7 @@
 import type { components } from "../client/rpi-types.js";
 
 /**
- * #27897 — interaction dashboard aggregation. TWO paths:
+ * Interaction dashboard aggregation. TWO paths:
  *
  * 1) SUMMARY (default, fast ~1-2s) — built purely from the reports/interaction
  *    endpoint (paginated, RPI-computed counts). Complete + cannot hang.
@@ -14,7 +14,7 @@ import type { components } from "../client/rpi-types.js";
  */
 
 // ---------------------------------------------------------------------------
-// 429 backoff (#27897 option B). The report-page fetches are RPI-side, SEQUENTIAL,
+// 429 backoff. The report-page fetches are RPI-side, SEQUENTIAL,
 // and bounded; on a 429 respect Retry-After with a bounded retry so a transient limit
 // doesn't fail the summary. sleep/now injected → unit-testable without real waits.
 // ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ export async function withRetryOn429<T>(
 }
 
 // ---------------------------------------------------------------------------
-// reports/interaction pagination (#27897 option B). RPI-COMPUTED, COMPLETE
+// reports/interaction pagination. RPI-COMPUTED, COMPLETE
 // per-interaction counts with REAL pagination (pageNumber / totalNumberOfPages) —
 // the sole source for the dashboard. fetchPage injected → pure + unit-testable;
 // live 429 backoff + per-call timeout live in the caller.
@@ -126,7 +126,7 @@ export async function collectReportPages(
 }
 
 // ---------------------------------------------------------------------------
-// Option B (#27897) — the reports-derived interaction dashboard. workflow-instances
+// The reports-derived interaction dashboard. workflow-instances
 // is super-linear/unusable (PS=25 ~22s, PS=255 timeout even on a 3-run tenant), so
 // the dashboard is built PURELY from reports/interaction: complete + fast (~1-2s),
 // cannot hang by construction. Per-run daily buckets are dropped (no fast per-run
@@ -207,7 +207,7 @@ export function summarizeInteractionReports(
 }
 
 // ---------------------------------------------------------------------------
-// RUN-COUNTS (#27957 / RPI 7.8) — server-side counts by time-bucket + execution
+// RUN-COUNTS (RPI 7.8) — server-side counts by time-bucket + execution
 // mode. REPLACES the interim daily grind: RPI 7.8 does the GROUP BY on the POST
 // reports/interaction/run-counts endpoint, returning small date-ordered buckets
 // in ONE call (no run-by-run grind, no date-chunking, no budget). fetch injected

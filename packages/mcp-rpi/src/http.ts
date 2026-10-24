@@ -2,8 +2,7 @@ import { existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
-// Load root .env for monorepo — Bun only auto-loads .env from cwd,
-// which is packages/mcp-rpi/ when run via workspace filter.
+// Load the repo's .env — Bun only auto-loads .env from the cwd, which may differ.
 const __mcpDir = dirname(fileURLToPath(import.meta.url));
 const rootEnv = join(__mcpDir, "../../../.env");
 if (existsSync(rootEnv)) {
@@ -25,15 +24,32 @@ if (existsSync(rootEnv)) {
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { cors } from "hono/cors";
+import { localOnly } from "./local-only.js";
+import { setAuditAccount, setAuditTenant } from "./tool-audit.js";
+import { tenantPinned } from "./tenant-pin.js";
+import { RateLimiter, peerFloodLimit, userLimit } from "./rate-limit.js";
+import { ValidationGuard } from "./validation-guard.js";
+import { UserSessions } from "./user-sessions.js";
+import { SERVE_MODE } from "./serve-mode.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createRPIMcpServer } from "./server.js";
 import { fetchInstanceSpec } from "./client/spec-fetch.js";
 import { compareVersion, BUILT_AGAINST_API_VERSION, type VersionStatus } from "./client/version-check.js";
-import { RPIConfigSchema, resolveProxyEnabled } from "./config.js";
-import { RPIAuthService } from "./client/rpi-auth.js";
+import { MCP_RPI_VERSION } from "./version.js";
+import { RPIConfigSchema, RPILoginOnlyConfigSchema, resolveProxyEnabled, isLoginOnly, missingRpiVarsIn, proxyOnlyBanner } from "./config.js";
+import { RPIAuthService, type ProxyLoginStatus } from "./client/rpi-auth.js";
 import { createRpiAuthMiddleware } from "./middleware/auth.js";
 import { buildProtectedResourceMetadata } from "./oauth-metadata.js";
 import { discoverOidcConfig, createOidcVerifier } from "./client/oidc-discovery.js";
+import { SessionStore, SESSION_LIMITS, ownerOf } from "./session-store.js";
+
+/** Token mode: the server-wide session cap (the per-token and per-user caps stay 20). */
+const TOKEN_MODE_MAX_SESSIONS = 200;
+/** Token mode: the largest request body accepted. */
+const TOKEN_MODE_MAX_BODY_BYTES = 4 * 1024 * 1024;
+
+/** The ONE answer for a session id that is unknown, someone else's, or expired. */
+const SESSION_NOT_FOUND = { jsonrpc: "2.0", error: { code: -32001, message: "Session not found" }, id: null } as const;
 import type { OidcVerifier } from "./client/oidc-discovery.js";
 
 // Detect missing RPI env vars. Any missing → DEGRADED mode: HTTP listener
@@ -42,26 +58,57 @@ import type { OidcVerifier } from "./client/oidc-discovery.js";
 // single boot warning (NOT per-request) naming the missing vars; /health
 // surfaces degraded state; /mcp returns a structured error so MCP clients
 // fail fast instead of hanging.
-const missingRpiVars: string[] = [];
-if (!process.env.RPI_INTEGRATION_API_URL) missingRpiVars.push("RPI_INTEGRATION_API_URL");
-if (!process.env.RPI_OAUTH_CLIENT_ID) missingRpiVars.push("RPI_OAUTH_CLIENT_ID");
-if (!process.env.RPI_OAUTH_CLIENT_SECRET) missingRpiVars.push("RPI_OAUTH_CLIENT_SECRET");
-if (!process.env.RPI_DEFAULT_CLIENT_ID) missingRpiVars.push("RPI_DEFAULT_CLIENT_ID");
+// Login-only mode (AUTH_REQUIRED=true, proxy off) does not require the RPI OAuth
+// client (see config.ts).
+//
+// PINNABLE settings: a build may compile these in (`bun build --define
+// process.env.X=…`, so a deployer can't edit its auth: the hardened-pinned container
+// does). --define replaces only LITERAL `process.env.X` reads, so every
+// decision below reads them through this view, built from literal reads; with
+// no defines it holds exactly process.env's values.
+const pinnedEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  AUTH_REQUIRED: process.env.AUTH_REQUIRED,
+  RPI_PROXY_ENABLED: process.env.RPI_PROXY_ENABLED,
+  RPI_OAUTH_CLIENT_ID: process.env.RPI_OAUTH_CLIENT_ID,
+  RPI_OAUTH_CLIENT_SECRET: process.env.RPI_OAUTH_CLIENT_SECRET,
+  RPI_DEFAULT_CLIENT_ID: process.env.RPI_DEFAULT_CLIENT_ID,
+  RPI_URL_ALLOWLIST: process.env.RPI_URL_ALLOWLIST,
+  RPI_PIN_CLIENT_ID: process.env.RPI_PIN_CLIENT_ID,
+};
+const missingRpiVars = missingRpiVarsIn(pinnedEnv);
+const loginOnly = isLoginOnly(pinnedEnv);
 
 // Secure-by-default: auth is required unless AUTH_REQUIRED is explicitly "false"
-// (an UNSET value → required). Matches apps/server's gate + boot guard.
+// (an UNSET value → required).
 const authRequired = process.env.AUTH_REQUIRED !== "false";
+
+// Env-credential mode: no sign-in (AUTH_REQUIRED=false) and the proxy user on —
+// every call runs as that one RPI account, so whoever reaches the server acts as it.
+// The server is then LOCAL-ONLY: it binds the loopback interface (no LAN), refuses
+// a browser page from another site and a non-loopback Host (./local-only.ts), and
+// applies the per-peer flood ceiling (./rate-limit.ts; no per-user budget: one
+// account, local clients only). No setting widens it. With a token the token is
+// the gate, and the server keeps every interface (a container, a deployment).
+const envCredentialMode = !authRequired && (() => {
+  try {
+    return resolveProxyEnabled(pinnedEnv);
+  } catch {
+    return false;
+  }
+})();
+const LOOPBACK_BIND = "127.0.0.1";
 
 interface NormalSetup {
   degraded: false;
-  config: ReturnType<typeof RPIConfigSchema.parse>;
+  config: ReturnType<typeof RPIConfigSchema.parse> | ReturnType<typeof RPILoginOnlyConfigSchema.parse>;
   authService: RPIAuthService;
   oidcVerifier: OidcVerifier | null;
   // Discovered OIDC issuer (the authorization server advertised in the RFC 9728
   // Protected Resource Metadata for MCP OAuth clients). null when no OpenID
   // provider is configured → discovery endpoints 404.
   oidcIssuer: string | null;
-  // #27634 runtime mask. instanceEndpoints = the running instance's served,
+  // Runtime mask. instanceEndpoints = the running instance's served,
   // normalized endpoint-set (null = spec unreachable → fail-open, no mask).
   // maskStatus is the operator-visible health (a SOFT note — never DegradedSetup,
   // which 503s /mcp); maskedCount is filled on the first session's factory call.
@@ -74,6 +121,8 @@ interface NormalSetup {
   // string for the diagnostic.
   versionStatus: VersionStatus;
   instanceVersion: string | null;
+  // The proxy user's login, tried once at boot (null when the proxy is off).
+  proxyLogin: ProxyLoginStatus | null;
 }
 interface DegradedSetup {
   degraded: true;
@@ -95,7 +144,7 @@ if (missingRpiVars.length > 0) {
 } else {
   let proxyEnabled: boolean;
   try {
-    proxyEnabled = resolveProxyEnabled();
+    proxyEnabled = resolveProxyEnabled(pinnedEnv);
   } catch (err) {
     console.error(
       `[mcp-rpi] DEGRADED MODE — proxy config invalid: ${(err as Error).message}. ` +
@@ -106,7 +155,14 @@ if (missingRpiVars.length > 0) {
   // @ts-expect-error -- TS narrows `proxyEnabled` to never if the catch ran;
   // we know the catch assigns to `setup` and falls through to the if below.
   if (typeof proxyEnabled === "boolean") {
-    const config = RPIConfigSchema.parse({
+    // Login-only without the OAuth client: say so once — a native password login
+    // is unavailable (named error at use), every call runs on the caller's token.
+    if (loginOnly && (!process.env.RPI_OAUTH_CLIENT_ID || !process.env.RPI_OAUTH_CLIENT_SECRET)) {
+      console.error(
+        "[mcp-rpi] login-only mode (AUTH_REQUIRED=true, proxy off): RPI_OAUTH_CLIENT_ID / RPI_OAUTH_CLIENT_SECRET not set — every call runs on the caller's own token; native password login is unavailable.",
+      );
+    }
+    const config = (loginOnly ? RPILoginOnlyConfigSchema : RPIConfigSchema).parse({
       integrationApiUrl: process.env.RPI_INTEGRATION_API_URL,
       proxyEnabled,
       proxyUser: proxyEnabled ? process.env.RPI_PROXY_USER : undefined,
@@ -116,6 +172,12 @@ if (missingRpiVars.length > 0) {
       defaultClientId: process.env.RPI_DEFAULT_CLIENT_ID,
       authRequired,
     });
+    // The audit line names the account a token-less call runs as (the proxy user).
+    setAuditAccount(config.proxyEnabled ? config.proxyUser : null);
+    // Pinned, every call runs in the configured tenant — the audit line names it.
+    setAuditTenant(tenantPinned() ? config.defaultClientId : null);
+    const banner = proxyOnlyBanner(authRequired, config.proxyEnabled, config.proxyUser);
+    if (banner) console.error(`[mcp-rpi] ${banner}`);
     const authService = new RPIAuthService(
       config.integrationApiUrl,
       config.oauthClientId,
@@ -123,6 +185,9 @@ if (missingRpiVars.length > 0) {
       config.proxyUser,
       config.proxyPass,
     );
+    // The proxy user's login, once at boot — reported on /health (never the password).
+    const proxyLogin = config.proxyEnabled ? await authService.checkProxyLogin() : null;
+    if (proxyLogin) console.error(`[mcp-rpi] proxy user "${config.proxyUser}" login at boot: ${proxyLogin}`);
     let oidcVerifier: OidcVerifier | null = null;
     let oidcIssuer: string | null = null;
     if (authRequired) {
@@ -137,7 +202,7 @@ if (missingRpiVars.length > 0) {
         );
       }
     }
-    // #27634: fetch the instance's OpenAPI spec ONCE at boot. From that single
+    // Fetch the instance's OpenAPI spec ONCE at boot. From that single
     // fetch we derive BOTH the endpoint mask AND the coarse version gate. Fail-open
     // — each signal is independently null on error; tools stay up regardless (soft
     // maskStatus/versionStatus, NOT DegradedSetup).
@@ -173,11 +238,18 @@ if (missingRpiVars.length > 0) {
       maskedCount: null,
       versionStatus,
       instanceVersion: spec.version,
+      proxyLogin,
     };
   }
 }
 
 const app = new Hono();
+// Local-only first, so a refused page gets no CORS preflight answer either. The
+// per-address flood ceiling applies in every mode; token mode adds the validation
+// budgets (./validation-guard.ts) and the per-user request budget (on /mcp).
+const limiter = new RateLimiter();
+if (envCredentialMode) app.use("/*", localOnly());
+app.use("/*", peerFloodLimit(limiter));
 // Permissive CORS + CRITICAL: expose WWW-Authenticate so browser MCP clients
 // (e.g. claude.ai) can read the OAuth challenge off a 401 — without exposing it
 // cross-origin, spec-correct discovery silently fails (the #1 browser gotcha).
@@ -204,6 +276,7 @@ app.get("/health", (c) =>
       ? {
           status: "ok",
           server: "rpi-mcp-server",
+          serverVersion: MCP_RPI_VERSION,
           transport: "http",
           mcp: "degraded",
           reason: setup.reason,
@@ -212,6 +285,7 @@ app.get("/health", (c) =>
       : {
           status: "ok",
           server: "rpi-mcp-server",
+          serverVersion: MCP_RPI_VERSION,
           transport: "http",
           mask: { status: setup.maskStatus, maskedCount: setup.maskedCount },
           version: {
@@ -219,6 +293,7 @@ app.get("/health", (c) =>
             instance: setup.instanceVersion,
             builtAgainst: BUILT_AGAINST_API_VERSION,
           },
+          ...(setup.proxyLogin ? { proxyLogin: setup.proxyLogin } : {}),
         },
   ),
 );
@@ -269,10 +344,16 @@ if (setup.degraded) {
   // the MCP SDK's Protocol can only `connect()` once per server, so a
   // module-level singleton would 500 on every subsequent session. Shared
   // `authService` (proxy token cache) and `oidcVerifier` are reused.
-  const transports = new Map<
-    string,
-    WebStandardStreamableHTTPServerTransport
-  >();
+  // Sessions live in the owner-bound, idle-expiring, capped registry
+  // (./session-store.ts).
+  // Token mode (callers present their own tokens, any number of them) caps the
+  // whole server at TOKEN_MODE_MAX_SESSIONS and each user at 20 (./user-sessions.ts)
+  // on top of the per-token cap.
+  const sessions = new SessionStore<WebStandardStreamableHTTPServerTransport>(
+    authRequired ? { ...SESSION_LIMITS, maxSessions: TOKEN_MODE_MAX_SESSIONS } : SESSION_LIMITS,
+  );
+  const userSessions = authRequired ? new UserSessions() : null;
+  setInterval(() => sessions.sweep(), 60_000).unref?.();
   const { config, authService, oidcVerifier, instanceEndpoints } = setup;
   // Pass oauthDiscoveryEnabled so 401s carry the WWW-Authenticate → PRM
   // challenge exactly when we serve discovery (an OIDC issuer was found).
@@ -281,60 +362,106 @@ if (setup.degraded) {
     authRequired,
     oidcVerifier,
     !!oidcIssuer,
+    authRequired ? new ValidationGuard() : null,
   );
+  // After auth, token mode: each verified caller's request budget.
+  const perUser = authRequired
+    ? [userLimit(limiter, (c) => c.get("callerKey") ?? "anonymous")]
+    : [];
 
-  app.all("/mcp", authMw, async (c) => {
+  app.all("/mcp", authMw, ...perUser, async (c) => {
     const sessionId = c.req.header("mcp-session-id");
     const authInfo = c.get("authInfo");
+    const owner = ownerOf(authInfo?.token);
 
-    if (sessionId && transports.has(sessionId)) {
-      const transport = transports.get(sessionId)!;
-      return transport.handleRequest(c.req.raw, { authInfo });
+    // An unknown, foreign or expired session id: ONE identical 404.
+    if (sessionId) {
+      const existing = sessions.get(sessionId, owner);
+      return existing ? existing.handleRequest(c.req.raw, { authInfo }) : c.json(SESSION_NOT_FOUND, 404);
     }
 
-    const transport = new WebStandardStreamableHTTPServerTransport({
+    // A new session: reserve its slots first (the user's, then the token's and the
+    // server's), so concurrent initializes can't overshoot a cap.
+    const callerKey = c.get("callerKey");
+    const userSlot = userSessions && callerKey ? userSessions.reserve(callerKey) : null;
+    if (userSlot && !userSlot.ok) return c.json({ error: userSlot.message }, userSlot.status);
+    const slot = sessions.reserve(owner);
+    if (!slot.ok) {
+      userSlot?.release();
+      return c.json({ error: slot.message }, slot.status);
+    }
+    const forget = (id: string): void => {
+      sessions.remove(id);
+      userSessions?.remove(id);
+    };
+    const transport: WebStandardStreamableHTTPServerTransport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
-      onsessioninitialized: (id) => {
-        transports.set(id, transport);
+      onsessioninitialized: (id: string): void => {
+        slot.commit(id, transport);
+        userSlot?.commit(id);
         console.error(`Session initialized: ${id}`);
       },
-      onsessionclosed: (id) => {
-        transports.delete(id);
+      onsessionclosed: (id: string): void => {
+        forget(id);
         console.error(`Session closed: ${id}`);
       },
     });
 
+    // Also fires when the store closes an idle session.
     transport.onclose = () => {
-      if (transport.sessionId) {
-        transports.delete(transport.sessionId);
-      }
+      if (transport.sessionId) forget(transport.sessionId);
     };
 
-    const { server, maskedCount } = createRPIMcpServer(
-      config,
-      authService,
-      oidcVerifier,
-      instanceEndpoints,
-    );
-    if (!setup.degraded) setup.maskedCount = maskedCount;
-    await server.connect(transport);
-    return transport.handleRequest(c.req.raw, { authInfo });
+    try {
+      const { server, maskedCount } = createRPIMcpServer(
+        config,
+        authService,
+        oidcVerifier,
+        instanceEndpoints,
+      );
+      if (!setup.degraded) setup.maskedCount = maskedCount;
+      await server.connect(transport);
+      return await transport.handleRequest(c.req.raw, { authInfo });
+    } finally {
+      // Not an initialize (or it failed): no session came of the slots.
+      slot.release();
+      userSlot?.release();
+    }
   });
 }
 
 const port = Number(process.env.RPI_MCP_HTTP_PORT) || 3002;
 
+// Env-credential mode listens on the IPv6 loopback too: Windows resolves
+// "localhost" to ::1 first, and a client without happy eyeballs (.NET, PowerShell)
+// waits ~2 s on every new connection for the refused ::1 before it falls back to
+// 127.0.0.1 (measured). Where ::1 doesn't exist (a container with IPv6 off), the
+// IPv4 loopback alone serves.
+let ipv6Loopback = false;
+if (envCredentialMode) {
+  try {
+    Bun.serve({ port, hostname: "::1", idleTimeout: 255, ...SERVE_MODE, fetch: app.fetch });
+    ipv6Loopback = true;
+  } catch (err) {
+    console.error(`[mcp-rpi] the IPv6 loopback [::1] is not available (${(err as Error).message}) — 127.0.0.1 only`);
+  }
+}
+
 // IMPORTANT: use console.error, never console.log (breaks stdio protocol in other contexts)
-console.error(`RPI MCP Server (HTTP) starting on port ${port}`);
+console.error(
+  envCredentialMode
+    ? `RPI MCP Server ${MCP_RPI_VERSION} (HTTP) starting on ${LOOPBACK_BIND}:${port}${ipv6Loopback ? ` and [::1]:${port}` : ""} — local only (every call runs as one RPI account: this machine's clients only, no LAN, no web pages from other sites)`
+    : `RPI MCP Server ${MCP_RPI_VERSION} (HTTP) starting on port ${port} (all interfaces)`,
+);
 console.error(`Auth required: ${authRequired}`);
 if (setup.degraded) {
   console.error(`MCP mode: DEGRADED (reason: ${setup.reason})`);
 }
 
-// TIMEOUT INVARIANT (do not break): tool poll budget < apps/server MCP
-// client abort < this Bun.serve idleTimeout. Currently:
+// TIMEOUT INVARIANT (do not break): tool poll budget < the MCP client's abort
+// < this Bun.serve idleTimeout. Currently:
 //   selection-rules DEFAULT_TIMEOUT_SECONDS 220s
-//   < apps/server patched-transport DEFAULT_TIMEOUT_MS 240s
+//   < a client transport timeout (240s is typical)
 //   < idleTimeout 255s (Bun's hard ceiling).
 // Bun caps idleTimeout at 255s — it is the LOWEST ceiling, which is why the
 // tool budget is forced down to 220 (NOT raised to 300 "to match Java
@@ -342,6 +469,12 @@ if (setup.degraded) {
 // the transport idle-kill the MCP session mid-poll).
 export default {
   port,
+  ...(envCredentialMode ? { hostname: LOOPBACK_BIND } : {}),
+  // Token mode: a request body over TOKEN_MODE_MAX_BODY_BYTES is refused (413)
+  // before it is read; no MCP request comes near it.
+  ...(authRequired ? { maxRequestBodySize: TOKEN_MODE_MAX_BODY_BYTES } : {}),
   idleTimeout: 255,
+  // Production mode, whatever NODE_ENV says (./serve-mode.ts).
+  ...SERVE_MODE,
   fetch: app.fetch,
 };

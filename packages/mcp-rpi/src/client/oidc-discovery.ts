@@ -4,10 +4,22 @@
  * Auto-detects OIDC configuration from RPI's login settings at startup.
  * When an OpenID provider is configured, creates a JWKS verifier for
  * fast local token validation without hitting RPI on every request.
+
  */
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { JWTPayload } from "jose";
-import type { RPIAuthService, LoginSetting } from "./rpi-auth.js";
+
+/** One entry of RPI's /authentication/login-settings response. */
+export interface LoginSetting {
+  authenticationType: string;
+  isExternal: boolean;
+  [key: string]: unknown;
+}
+
+/** Anything that can fetch RPI's login settings (e.g. the RPI auth service). */
+export interface LoginSettingsSource {
+  getLoginSettings(): Promise<LoginSetting[]>;
+}
 
 export interface OidcConfig {
   jwksUri: string;
@@ -20,7 +32,13 @@ export type OidcVerifyResult =
   | { valid: false };
 
 export interface OidcVerifier {
-  verifyToken(token: string): Promise<OidcVerifyResult>;
+  /**
+   * Verify a token against the provider: signature (JWKS), issuer, expiry and —
+   * unless `skipAudience` — the audience. `skipAudience` answers only "is this a
+   * genuine, unexpired token from this provider?" (realm tokens may carry another
+   * audience, e.g. "account").
+   */
+  verifyToken(token: string, opts?: { skipAudience?: boolean }): Promise<OidcVerifyResult>;
   readonly config: OidcConfig;
 }
 
@@ -40,7 +58,7 @@ const DISCOVERY_TIMEOUT_MS = 5000;
  * Never throws — logs warnings and returns null on failure.
  */
 export async function discoverOidcConfig(
-  authService: RPIAuthService,
+  authService: LoginSettingsSource,
 ): Promise<OidcConfig | null> {
   try {
     const settings = await authService.getLoginSettings();
@@ -146,14 +164,14 @@ export function createOidcVerifier(config: OidcConfig): OidcVerifier {
 
   return {
     config,
-    async verifyToken(token: string): Promise<OidcVerifyResult> {
+    async verifyToken(token: string, opts: { skipAudience?: boolean } = {}): Promise<OidcVerifyResult> {
       try {
         const verifyOptions: {
           issuer?: string;
           audience?: string;
         } = {};
         if (config.issuer) verifyOptions.issuer = config.issuer;
-        if (config.audience) verifyOptions.audience = config.audience;
+        if (config.audience && !opts.skipAudience) verifyOptions.audience = config.audience;
 
         const { payload } = await jwtVerify(token, jwks, verifyOptions);
 

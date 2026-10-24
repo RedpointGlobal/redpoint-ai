@@ -30,7 +30,7 @@ function installFetch() {
     calls.push({ url: String(url), method, headers, body: init?.body as string });
     if (String(url).includes("/auth/signon")) {
       signonCount++;
-      return new Response(JSON.stringify({ token: `proxy-${signonCount}` }), {
+      return new Response(JSON.stringify({ accessToken: `proxy-${signonCount}` }), {
         status: 200,
       });
     }

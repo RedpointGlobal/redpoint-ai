@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
-// Load root .env for monorepo — Bun only auto-loads .env from cwd.
+// Load the repo's .env — Bun only auto-loads .env from the cwd, which may differ.
 const __mcpDir = dirname(fileURLToPath(import.meta.url));
 const rootEnv = join(__mcpDir, "../../../.env");
 if (existsSync(rootEnv)) {
@@ -23,6 +23,8 @@ if (existsSync(rootEnv)) {
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createRPIMcpServer } from "./server.js";
+import { setAuditAccount, setAuditTenant } from "./tool-audit.js";
+import { tenantPinned } from "./tenant-pin.js";
 import { RPIConfigSchema, resolveProxyEnabled } from "./config.js";
 import { RPIAuthService } from "./client/rpi-auth.js";
 
@@ -74,6 +76,10 @@ const authService = new RPIAuthService(
   config.proxyPass,
 );
 
+// The audit line names the account a token-less call runs as (the proxy user).
+setAuditAccount(config.proxyEnabled ? config.proxyUser : null);
+// Pinned, every call runs in the configured tenant — the audit line names it.
+setAuditTenant(tenantPinned() ? config.defaultClientId : null);
 const { server } = createRPIMcpServer(config, authService);
 const transport = new StdioServerTransport();
 await server.connect(transport);
