@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * #27897 (P2) — <AgentDashboard>: renders a dashboard (header + KPI tile row +
- * chart panels) from the RESULT of a render_view_dashboard tool call (#27957 Phase
+ * P2 — <AgentDashboard>: renders a dashboard (header + KPI tile row +
+ * chart panels) from the RESULT of a render_view_dashboard tool call (Phase
  * 2 — the server assembles + validates the spec, so this renders it directly).
  * Reuses <StatTiles> and <ChartCanvas> as primitives so tiles/panels look identical
  * to their standalone forms.

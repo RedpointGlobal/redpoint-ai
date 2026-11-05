@@ -16,8 +16,8 @@ mcpToolFilter:
   - get_decision_offer_test_channel_fulfillment_states
   - get_data_process_default_parameters
 operations:
-  activity: [get_workflow_activity_results, get_workflow_activity_log, get_workflow_activity_assets, get_workflow_activity_sql_trace]
-  instance: [get_workflow_all_activity_results, list_workflow_instance_summaries]
+  activity: [get_workflow_activity_results, get_workflow_activity_log, get_workflow_activity_assets, get_workflow_activity_sql_trace, get_workflow_all_activity_results]
+  instance: [get_workflow_all_activity_results, list_workflow_instance_summaries, get_workflow_association_instance_logs]
   logs: [get_workflow_association_instance_logs]
   audience-block: [get_workflow_audience_block_instance_results]
   run-config: [get_decision_offer_test_channel_fulfillment_states, get_data_process_default_parameters]

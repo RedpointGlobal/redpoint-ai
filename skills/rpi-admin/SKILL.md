@@ -21,9 +21,13 @@ operations:
   # verify_connection is still in the sub-agent's toolset — deterministic,
   # not a phrase allowlist. (2026-08-17: operation="diagnostics" had hidden it,
   # sending a plain connection check to the cluster-admin error log → 403.)
+  # get_user_client_list is in auth and diagnostics as well as identity: "which
+  # clients can I ACCESS?" reads as an access question, and the router has also
+  # sent it as diagnostics; under either, the caller's own tenant list must
+  # still be in the menu.
   identity: [get_user_profile, get_user_client_list, get_user_recent_items, verify_connection]
-  auth: [verify_connection, validate_token_status, get_login_settings]
-  diagnostics: [get_cluster_api_error_log, get_cluster_audit_history, verify_connection]
+  auth: [verify_connection, validate_token_status, get_login_settings, get_user_client_list]
+  diagnostics: [get_cluster_api_error_log, get_cluster_audit_history, get_user_client_list, verify_connection]
 maxSteps: 5
 tags: [rpi, admin, identity, diagnostics]
 ---

@@ -106,7 +106,7 @@ export function ChatPanel({ workspaceId, suggestions }: ChatPanelProps) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {/* #27897 / #27957 — register the render_chart / render_stats /
+      {/* Register the render_chart / render_stats /
           render_view_dashboard tool-UIs so those tool calls render inline as
           <AgentChart> / <StatTiles> / <AgentDashboard>. Chart + stats render from
           their args; the dashboard renders from the RESULT (server-assembled spec).
@@ -310,7 +310,7 @@ function ToolFallback({
 
 // While a dispatched skill (execute_skill) is RUNNING, show a friendly working
 // state instead of the bare collapsed chip. A per-day runs dashboard grinds the
-// workflow-instances endpoint for ~2min (#27897), so a runs/daily dispatch gets a
+// workflow-instances endpoint for ~2min, so a runs/daily dispatch gets a
 // "building your dashboard…" placeholder; other skills get a generic "Working…".
 // On complete we defer to the same collapsible ToolFallback so nothing regresses.
 function executeSkillLabel(args: { skillName?: string; input?: string } | undefined): string {

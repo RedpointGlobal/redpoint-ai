@@ -7,8 +7,22 @@
  * it is not dead code — while staying fail-closed for missing/invalid creds.
  */
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Hono } from "hono";
-import { authMiddleware, hashApiKey } from "../middleware/auth.js";
+import * as schema from "../store/schema.js";
+
+// The rpai_ branch looks the key up in the db: an in-memory one with the key tables, so the
+// test doesn't depend on a dev database that already has the schema (a fresh clone has none).
+const sqlite = new Database(":memory:");
+for (const ddl of [
+  `CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, config TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE TABLE api_keys (id TEXT PRIMARY KEY, key_hash TEXT NOT NULL, key_prefix TEXT NOT NULL, name TEXT NOT NULL, workspace_id TEXT REFERENCES workspaces(id), permissions TEXT, created_at INTEGER NOT NULL, expires_at INTEGER, last_used_at INTEGER)`,
+  `CREATE TABLE api_key_owners (key_id TEXT PRIMARY KEY REFERENCES api_keys(id) ON DELETE CASCADE, user_id TEXT NOT NULL)`,
+]) sqlite.run(ddl);
+mock.module("../store/db.js", () => ({ db: drizzle(sqlite, { schema }) }));
+
+const { authMiddleware, hashApiKey } = await import("../middleware/auth.js");
 
 // A stable RPI/Keycloak user GUID as validate-token-status returns it (top-level
 // `id`). The metering-convergence fix keys the principal on THIS, not the token.

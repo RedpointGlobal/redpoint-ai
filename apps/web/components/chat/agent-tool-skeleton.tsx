@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * #27897 — placeholder shown while a render_chart / render_stats / render_dashboard
+ * Placeholder shown while a render_chart / render_stats / render_dashboard
  * tool call is still STREAMING its args. Without it the tool-UIs ran their spec
  * guard against partial args and flashed the "malformed spec" fallback before the
  * complete args arrived. The renders show this while status.type !== "complete";

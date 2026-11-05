@@ -11,6 +11,13 @@
  * 3. Action/hybrid skill bodies may name only tools listed in the same
  *    skill's `mcpToolFilter`. Tools the skill doesn't own are forbidden.
  *
+ * 4. Frontmatter `description`s follow the same rule (expert: no tools;
+ *    action/hybrid: own filter only). The router reads descriptions only to
+ *    pick a skill, so a tool name there is noise that can go stale.
+ *
+ * Tool names are matched backticked or bare, so a plain-prose mention of
+ * another skill's tool is caught too.
+ *
  * The cross-reference is done by parsing source files (regex match on
  * `registerTool("name", ...)`) so this test has no runtime dependency on
  * mcp-rpi.
@@ -42,7 +49,7 @@ const KNOWN_STALE: ReadonlyArray<{ name: string; reason: string }> = [];
 
 function scanToolDir(dir: string, names: Set<string>): void {
   if (!existsSync(dir)) return;
-  // Recurse: hand tools live in src/tools/*.ts, generated tools (#27634) in
+  // Recurse: hand tools live in src/tools/*.ts, generated tools in
   // src/tools/generated/*.ts — both register tools the mcpToolFilter can reference.
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
@@ -70,16 +77,16 @@ function collectRegisteredToolNames(): Set<string> {
 }
 
 /**
- * Extract every backtick-wrapped snake_case identifier from a skill body
- * that matches a real registered tool name. Picks up both `single_tool` and
- * `multiple` `tool_names` mentions; ignores non-tool-shaped backticks.
+ * Extract every snake_case identifier in a skill body that matches a real
+ * registered tool name — backticked (`single_tool`) or bare (a redirect like
+ * "counted by run_audience_count"). Words that aren't tool names are ignored.
  */
 function findToolNamesInBody(
   body: string,
   registered: Set<string>,
 ): Set<string> {
   const found = new Set<string>();
-  for (const m of body.matchAll(/`([a-z][a-z0-9_]*)`/g)) {
+  for (const m of body.matchAll(/\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/g)) {
     if (registered.has(m[1])) found.add(m[1]);
   }
   return found;
@@ -154,6 +161,28 @@ describe("shipped skills mcpToolFilter cross-reference", () => {
     if (errors.length > 0) {
       throw new Error(
         `Action/hybrid bodies may only name their own filtered tools (CONTRIBUTING.md):\n  ${errors.join("\n  ")}`,
+      );
+    }
+  });
+
+  it("skill descriptions name no tool (expert) or only their own filtered tools (action/hybrid)", async () => {
+    const tools = collectRegisteredToolNames();
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+
+    const errors: string[] = [];
+    for (const skill of skills) {
+      const allowed = skill.type === "expert" ? new Set<string>() : new Set(skill.mcpToolFilter ?? []);
+      const found = findToolNamesInBody(skill.description ?? "", tools);
+      const stray = [...found].filter((name) => !allowed.has(name));
+      if (stray.length > 0) {
+        errors.push(
+          `Skill "${skill.name}" (${skill.type}) names tools in its description that aren't in its mcpToolFilter: ${stray.sort().join(", ")}`,
+        );
+      }
+    }
+    if (errors.length > 0) {
+      throw new Error(
+        `Descriptions may only name the skill's own filtered tools (experts: none):\n  ${errors.join("\n  ")}`,
       );
     }
   });

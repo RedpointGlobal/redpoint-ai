@@ -1,5 +1,5 @@
 /**
- * #27897 task 5 — the CSS-var inlining that keeps chart exports colour-correct.
+ * The CSS-var inlining that keeps chart exports colour-correct.
  *
  * The whole point: a serialized/rasterized SVG can't see the document's custom
  * properties, so every var(--…) must be replaced with its resolved literal before

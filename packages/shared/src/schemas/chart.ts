@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * #27897 (Approach B) — the CHART SPEC contract shared by the render_chart tool
+ * The CHART SPEC contract shared by the render_chart tool
  * (apps/server, validation) and <AgentChart> (apps/web, Recharts rendering).
  *
  * The agent emits a schema-validated chart JSON after pulling data via existing
@@ -17,7 +17,7 @@ export const ChartTypeSchema = z.enum(CHART_TYPES);
 export type ChartType = (typeof CHART_TYPES)[number];
 
 /** One data point — a flat record of the x field + each series/value field. */
-const ChartDatumSchema = z.record(z.union([z.string(), z.number(), z.null()]));
+const ChartDatumSchema = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
 export const ChartSpecSchema = z
   .object({
@@ -43,7 +43,7 @@ export const ChartSpecSchema = z
     /** Stack the series (bar/area only). Ignored by other types. */
     stacked: z.boolean().optional(),
     /**
-     * Dashboard-panel column span (#27897 followup). How many of the dashboard's
+     * Dashboard-panel column span. How many of the dashboard's
      * `columns` this panel occupies in the EXPANDED grid — e.g. colSpan 2 in a
      * 2-column dashboard = a full-width row. Enables asymmetric layouts (a
      * full-width chart above an uneven row — e.g. a 5-col grid with a 3-wide

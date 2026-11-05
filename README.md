@@ -24,8 +24,8 @@ apps/server    — Bun + Hono API server (agent engine, REST API)
 apps/web       — Next.js frontend (workspace picker, chat UI)
 packages/shared — Shared schemas, types, and utilities
 packages/skills — Skill runtime (loader, registry, router)
-packages/mcp-rpi — RPI MCP server (47 tools across 8 domains)
-packages/mcp-drh — DRH MCP server (93 tools across 11 groups)
+packages/mcp-rpi — RPI MCP server (197 tools: 44 hand-written across 8 domains + 153 generated reads)
+packages/mcp-drh — DRH MCP server (57 tools across 11 groups; 93 registered, the 36 writes gated)
 skills/        — Skill definitions (SKILL.md files)
 ```
 
@@ -36,6 +36,7 @@ skills/        — Skill definitions (SKILL.md files)
 - [Workspaces](docs/workspaces.md)
 - [Skills](docs/skills.md)
 - [MCP RPI Server](docs/rpi-mcp-server.md) — including standalone binary build details
+- [MCP DRH Server](docs/drh-mcp-server.md) — the Data Readiness Hub tool surface, configuration and binary build
 - [Providers](docs/providers.md)
 - [API Reference](docs/api.md)
 - [Contributing](CONTRIBUTING.md)

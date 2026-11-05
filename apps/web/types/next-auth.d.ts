@@ -35,7 +35,8 @@ declare module "next-auth" {
     rpiRefreshToken?: string;
     rpiExpiresAt?: number;
     /** Which provider minted the RPI token — routes lazy refresh to the right
-     * endpoint ("rpi-native" → RPI /connect/token; "keycloak-sso" → Keycloak). */
+     * endpoint ("rpi-native" → RPI /connect/token; "keycloak-sso" → the SSO redirect
+     * provider's Keycloak). */
     rpiAuthSource?: "rpi-native" | "keycloak-sso";
     /** Per-request RPI Environment Location URL (validated); forwarded as X-RPI-URL. */
     rpiUrl?: string;

@@ -1,5 +1,5 @@
 /**
- * #27897 — current-date grounding. Shared by the orchestrator prompt AND the
+ * Current-date grounding. Shared by the orchestrator prompt AND the
  * dispatched sub-agent prompt (router.ts) so relative ranges resolve to the
  * present, not the model's training cutoff.
  */

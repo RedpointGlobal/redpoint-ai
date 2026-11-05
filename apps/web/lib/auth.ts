@@ -10,7 +10,8 @@
  *
  *   2. RPI IDENTITY ("rpi-native" credentials provider, id: "rpi-native")
  *      Logs the user in to RPI directly via OAuth2 password grant against
- *      RPI's /connect/token endpoint. The resulting access_token will be
+ *      RPI's /connect/token endpoint. (SSO is the OIDC redirect provider, id
+ *      "sso" — authorization_code + PKCE; it has no password path.) The resulting access_token will be
  *      forwarded on chat-driven MCP tool calls (PR 2 of this work) so RPI
  *      applies the user's per-user RBAC instead of the shared service-account
  *      proxy. Without this, every chat hits RPI as the proxy user.
@@ -32,7 +33,6 @@ import Keycloak from "next-auth/providers/keycloak";
 import { resolveEnvLocation, ENV_LOCATION_COOKIE } from "./env-location";
 import { rpiTokenEndpoint } from "./rpi-token-endpoint";
 import {
-  keycloakPasswordGrant,
   keycloakRefresh,
   keycloakOidcOptions,
   mapKeycloakOidcAccount,
@@ -234,69 +234,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (request) => {
         }
       },
     }),
-    /**
-     * SSO (interim) — OAuth2 password grant against the realm's Keycloak token
-     * endpoint (PUBLIC client, no secret). Same wire shape as rpi-native, just a
-     * different endpoint, discovered from RPI login-settings' public
-     * `openIDIssuer`. The Keycloak JWT is accepted by RPI directly and the
-     * apps/server OIDC branch, and stable-id metering keys it to rpi:<stableId>.
-     * All the moving parts live in lib/keycloak-sso.ts (unit-tested there);
-     * this provider is a thin adapter into NextAuth's User contract.
-     *
-     * Signed in via signIn("keycloak-sso", { username, password }).
-     */
-    Credentials({
-      id: "keycloak-sso",
-      name: "Single Sign-On",
-      credentials: {
-        username: { label: "Username", type: "text" },
-        password: { label: "Password", type: "password" },
-        // Per-request Environment Location — carried like the native path. Auth
-        // stays on the central Keycloak (static issuer); this only sets which RPI
-        // instance the session TARGETS (rpiUrl → the X-RPI-URL chain). Empty →
-        // env default instance.
-        rpiUrl: { label: "Environment Location", type: "text" },
-      },
-      async authorize(credentials) {
-        const username = credentials?.username;
-        const password = credentials?.password;
-        if (typeof username !== "string" || typeof password !== "string") return null;
-
-        // SSRF-guard the selected instance at the web entry (undefined → default,
-        // null → reject, string → validated). Auth stays central; this only sets
-        // which instance the session TARGETS.
-        const loc = resolveEnvLocation(credentials?.rpiUrl);
-        if (loc === null) {
-          console.error(
-            "[auth.keycloak-sso] rejected non-allowlisted Environment Location URL",
-          );
-          return null;
-        }
-        const rpiUrl = loc;
-
-        const session = await keycloakPasswordGrant(username, password);
-        if (!session) return null;
-        return {
-          id: username,
-          name: username,
-          rpiAccessToken: session.rpiAccessToken,
-          rpiRefreshToken: session.rpiRefreshToken,
-          rpiExpiresAt: session.rpiExpiresAt,
-          rpiAuthSource: "keycloak-sso",
-          rpiUrl,
-        };
-      },
-    }),
   ];
 
   // SSO — the CORRECT path: Keycloak OIDC authorization_code + PKCE
   // (S256) redirect flow, PUBLIC client (no secret). Added only when discovery
   // yields a public issuer; NextAuth discovers authorize/token/jwks from it. The
   // callback route (/api/auth/callback/sso) is served by the [...nextauth]
-  // handler. NOTE: this realm's `rpi` client only has the interaction app's
-  // redirect URI registered today, so a live redirect 400s "invalid redirect_uri"
-  // until OURS is registered — expected/deferred, not a bug. The interim
-  // password-grant provider (keycloak-sso) keeps SSO working meanwhile.
+  // handler. The deploying org registers this app's redirect URI on its realm's
+  // client; until it does, the IdP refuses the redirect and native RPI credentials
+  // are the way in. SSO has no password path: redirect only.
   const oidc = await getKeycloakOidc();
   if (oidc) {
     providers.push(Keycloak(keycloakOidcOptions(oidc.issuer, oidc.clientId)));
@@ -335,9 +281,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (request) => {
         t.rpiRefreshToken = u.rpiRefreshToken;
         t.rpiExpiresAt = u.rpiExpiresAt;
         // Which provider minted this token — routes the lazy refresh below.
-        // Default to rpi-native for back-compat with pre-SSO sessions.
-        t.rpiAuthSource =
-          u.rpiAuthSource === "keycloak-sso" ? "keycloak-sso" : "rpi-native";
+        t.rpiAuthSource = "rpi-native";
         // Per-request Environment Location — ride the session so the proxy
         // forwards it as X-RPI-URL and the refresh targets the same instance.
         t.rpiUrl = typeof u.rpiUrl === "string" ? u.rpiUrl : undefined;
@@ -346,9 +290,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (request) => {
       // === Sign-in branch — OIDC redirect provider (id "keycloak") ===--------
       // Its tokens arrive via `account`, not `user`. Map them into the SAME rpi*
       // fields so X-RPI-Token forwarding, lazy refresh, and metering are
-      // identical to the password paths. rpiAuthSource stays "keycloak-sso" so
-      // the refresh below routes to the public Keycloak endpoint (keycloakRefresh)
-      // for BOTH Keycloak paths — the token endpoint + public client are the same.
+      // identical to the native path. rpiAuthSource "keycloak-sso" routes the
+      // refresh below to the public Keycloak endpoint (keycloakRefresh).
       const acct = account as { provider?: string } | null | undefined;
       if (acct?.provider === "sso") {
         const mapped = mapKeycloakOidcAccount(account as OidcAccountLike);

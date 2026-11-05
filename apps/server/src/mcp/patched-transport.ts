@@ -66,6 +66,9 @@ export interface PatchedTransport extends MCPTransport {
 // idleTimeout (hard-capped 255s) would just relocate the failure.
 const DEFAULT_TIMEOUT_MS = 240_000;
 
+/** How long close() waits for the server to end the session (best effort). */
+const SESSION_END_TIMEOUT_MS = 5_000;
+
 export function createPatchedTransport(config: {
   url: string;
   headers?: Record<string, string>;
@@ -244,9 +247,22 @@ export function createPatchedTransport(config: {
     },
 
     async close() {
+      // End the session on the server (MCP Streamable HTTP: DELETE with the
+      // session id), so it frees its slot now rather than at the server's idle
+      // expiry — the RPI MCP server caps each user's open sessions.
+      // Best effort and bounded: a server that is gone, or one that doesn't
+      // support DELETE, still lets the client close.
+      const sessionId = transport.sessionId;
       // Clear session ID so reconnects initialize a fresh session
       // instead of reusing a stale one.
       transport.sessionId = null;
+      if (sessionId) {
+        await fetch(config.url, {
+          method: "DELETE",
+          headers: { ...config.headers, "mcp-session-id": sessionId },
+          signal: AbortSignal.timeout(SESSION_END_TIMEOUT_MS),
+        }).catch(() => undefined);
+      }
     },
 
     onclose: undefined,

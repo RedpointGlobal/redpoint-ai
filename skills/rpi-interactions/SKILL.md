@@ -27,7 +27,7 @@ operations:
   get: [list_interactions, get_interaction_by_id, get_interaction_by_name, get_interaction_activity, get_file_info_by_id, get_audience_by_id]
   metadata: [list_interactions, get_interaction_activity, get_interaction_trigger, get_interaction_available_inputs, get_interaction_default_metadata]
   workflow: [list_interactions, get_interaction_workflows, get_interaction_workflow_activities, get_workflow_instance_summary, get_interactions_workflow_status, get_interaction_workflow_instances]
-  runs: [summarize_interaction_runs, list_interactions]
+  runs: [summarize_interaction_runs, list_interactions, get_interaction_by_name, get_interaction_by_id, get_interaction_workflow_instances]
   schedule: [list_interactions, calculate_interaction_next_firing_times]
 maxSteps: 15
 tags: [rpi, interactions, workflows]
@@ -60,7 +60,7 @@ Apply foundation guidance: respect `clientId`, look up `parentFolderID` via the 
 - `get_workflow_instance_summary` — overall summary for a single running/finished instance (needs the integer `workflowAssociationInstanceID`).
 - `get_interactions_workflow_status` — current top-level status for one or more interactions (does NOT carry historical execution data).
 - `get_interaction_workflow_instances` — list all past and current workflow instances for an interaction id, optionally with their result counts. Use this to answer "what were the counts from the last run?" — pick the most recent terminal-state instance from the returned array.
-- `summarize_interaction_runs` — the tool for a **per-interaction runs summary** (operation `runs`). **Call it ONCE with just `fromDate`/`toDate`** — it aggregates SERVER-SIDE (fast, ~1-2s) and returns the computed summary: `totalRuns`, `activeInteractions`, `testInteractions`/`productionInteractions` (interaction counts by environment), `runsPerInteraction:[{name,runs,type}]` (top 10), `truncated`/`truncationNote`. Do NOT hand-aggregate raw runs and do NOT loop `get_interaction_by_id`/per-interaction. If `truncated` is true, relay `truncationNote` — never present a partial summary as complete. This is the per-interaction run-data tool; there is no raw per-run list tool. (A runs **dashboard/report/trend** — counts over time — is rendered by the orchestrator's dashboard view, not composed here.)
+- `summarize_interaction_runs` — the tool for a **per-interaction runs summary** (operation `runs`). **Call it ONCE with just `fromDate`/`toDate`** — it aggregates SERVER-SIDE (~1-3s) and returns computed figures, never invented: `totalRuns` plus `testRuns`/`productionRuns` (REAL run counts from RPI's run counts), `activeInteractions`, `testInteractions`/`productionInteractions` (interaction counts by environment), `runsPerInteraction:[{name,runs,type}]` (top 10 by real run count), and `runsPerInteractionNote` / `truncated` / `truncationNote` when the figures are partial. Do NOT hand-aggregate raw runs and do NOT loop `get_interaction_by_id`/per-interaction. If `runsPerInteractionNote` or `truncationNote` is present, relay it — never present a partial summary as complete. This is the per-interaction run-data tool; there is no raw per-run list tool. (A runs **dashboard/report/trend** — counts over time — is rendered by the orchestrator's dashboard view, not composed here.)
 
 ### Scheduling
 - `calculate_interaction_next_firing_times` — compute the next N firing times for a recurrence trigger. Optional `numberOfSchedules` argument.

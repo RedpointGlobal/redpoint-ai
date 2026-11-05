@@ -1,5 +1,5 @@
 /**
- * #27897 — current-date grounding, shared by BOTH the orchestrator prompt
+ * Current-date grounding, shared by BOTH the orchestrator prompt
  * (apps/server chat route) and the dispatched sub-agent prompt (router.ts).
  *
  * The model otherwise falls back to its training-cutoff date and resolves relative
@@ -11,9 +11,9 @@
  * dynamic date). UTC, because RPI run timestamps are UTC.
  *
  * v7.130 — the preamble now resolves "this week"/"this month" to CONCRETE windows
- * rather than leaving the arithmetic to the model. The Gulla trace showed "this
+ * rather than leaving the arithmetic to the model. A trace showed "this
  * week" interpreted three different ways across runs (today-only → undercount),
- * because each run re-did the math. Definitions (Mark's call): "this week" = a
+ * because each run re-did the math. Definitions (a product call): "this week" = a
  * rolling 7-day window (today-6 → today); "this month" = 1st-of-current-month →
  * today. Emitting the exact YYYY-MM-DD bounds makes the window deterministic.
  */

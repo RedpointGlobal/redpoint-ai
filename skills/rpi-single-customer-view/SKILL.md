@@ -11,11 +11,6 @@ mcpToolFilter:
   - get_single_customer_view_attribute_group
   - get_single_customer_view_attribute_group_by_name
   - get_single_customer_view_event_details_html
-operations:
-  list: [list_single_customer_views]
-  get: [list_single_customer_views, get_single_customer_view, get_single_customer_view_by_name]
-  attribute-groups: [list_single_customer_views, get_single_customer_view_attribute_group, get_single_customer_view_attribute_group_by_name]
-  event-details: [get_single_customer_view_event_details_html]
 maxSteps: 5
 tags: [rpi, single-customer-view, scv, profile]
 ---
@@ -43,14 +38,12 @@ detail card for one channel-execution event (ChannelExecutionID +
 OfferTemplateInstanceID + OfferCode) as HTML — an event view, distinct from the SCV
 definition.
 
-## Operations (menu-narrowing)
+## No operations — the whole menu, always
 
-- **list** — browse SCV views.
-- **get** — fetch one SCV view by id or name.
-- **attribute-groups** — fetch an attribute group within an SCV (by id or name).
-- **event-details** — render an SCV event's details as HTML.
-
-Missing/unknown operation falls back to the full inventory (safe).
+This skill declares no `operations:`: its six tools are one small menu, and the
+sub-agent always gets all of them. An operation chosen from the question could
+only hide the tool it needed — a named attribute group under a view getter, or the
+view list under event details — so none is offered.
 
 ## Common workflows
 

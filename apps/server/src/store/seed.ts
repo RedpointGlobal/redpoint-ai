@@ -1,4 +1,5 @@
 import { db } from "./db.js";
+import { ensureOwnerTables } from "./owner-tables.js";
 import { WORKSPACE_NAMES, LEGACY_WORKSPACE_NAMES } from "@redpoint-ai/shared";
 import {
   workspaces,
@@ -8,6 +9,8 @@ import {
   runs,
   apiKeys,
   auditLogs,
+  threadOwners,
+  apiKeyOwners,
 } from "./schema.js";
 import { randomUUID } from "crypto";
 import { count, eq } from "drizzle-orm";
@@ -133,7 +136,7 @@ const DEFAULT_WORKSPACES = [
         "rpi-selection-rules",
         "rpi-admin",
         "rpi-health",
-        // #27634 adoption — generated read tools reach the orchestrator via new
+        // Adoption — generated read tools reach the orchestrator via new
         // domain skills, adopted one at a time (each eval-gated). First: attributes.
         "rpi-attributes",
         "rpi-operations",
@@ -154,7 +157,7 @@ const DEFAULT_WORKSPACES = [
         "List my selection rules...",
         "List my audiences...",
         "List my interactions...",
-        // #27897 followup — the runs-dashboard pill. Lives in the WORKSPACE config
+        // The runs-dashboard pill. Lives in the WORKSPACE config
         // (not only chat-panel's DEFAULT_SUGGESTIONS) because a configured
         // workspace's config.suggestions OVERRIDES the hardcoded defaults, so a
         // default-only pill vanishes once config loads. "daily" is the per-day
@@ -235,6 +238,8 @@ const EXPECTED_TABLES = [
   runs,
   apiKeys,
   auditLogs,
+  threadOwners,
+  apiKeyOwners,
 ] as const;
 
 /**
@@ -289,7 +294,14 @@ export async function seedDefaults(): Promise<void> {
   // additive here (creates the missing tables, never drops/alters existing ones),
   // so a rep's existing data survives the self-heal.
   if (!(await schemaIsComplete())) {
-    bootstrapSchemaIfMissing();
+    // The owner tables (7.179) first, explicitly: push can't add them unattended
+    // when the database also holds a table it doesn't know (./owner-tables.ts).
+    await ensureOwnerTables();
+    if (!(await schemaIsComplete())) bootstrapSchemaIfMissing();
+    // push can exit 0 without applying (a prompt it couldn't ask): say so, loudly.
+    if (!(await schemaIsComplete())) {
+      throw new Error("[seed] the database schema is still incomplete after drizzle-kit push — run `bunx drizzle-kit push` in apps/server and answer its prompts");
+    }
   }
   const result = await db.select({ total: count() }).from(workspaces);
   const total = result[0].total;

@@ -25,10 +25,15 @@ operations:
     - drh_list_sources
     - drh_list_database_sources
   get:
+    - drh_list_databases
+    - drh_list_sources
     - drh_get_database_by_id
     - drh_get_default_database
     - drh_get_source_by_id
     - drh_get_database_source
+    - drh_get_database_summary
+    - drh_get_database_cdp_summary
+    - drh_get_database_consolidation_rate
   summary:
     - drh_get_database_summary
     - drh_get_database_cdp_summary
@@ -51,6 +56,9 @@ user explicitly names a different database.
 
 - **List** the databases or the sources within a database when the user asks what exists / to see them.
 - **Get** a single database or source when the user names or ids one.
+  A name is not an id: never derive or guess an id from a name or its digits. Find the name in the
+  list tool's results to get its id, then fetch by that id; if the name isn't listed, say it wasn't
+  found — do not invent an id.
 - **Summary** — report the database's readiness/health summary, CDP summary, consolidation rate, or
   recent activity when asked about data readiness/health or an overview.
 

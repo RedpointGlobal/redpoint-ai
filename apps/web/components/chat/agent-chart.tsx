@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * #27897 (Approach B) — <AgentChart>: renders a schema-validated chart spec with
+ * <AgentChart>: renders a schema-validated chart spec with
  * Recharts. No model-authored code — the render_chart tool ARGS are the spec, and
  * assistant-ui hands them here via makeAssistantToolUI. One spec renders at any
  * size (ResponsiveContainer).
@@ -54,7 +54,7 @@ import {
 const PALETTE_SIZE = 8;
 const color = (i: number) => `var(--dataviz-${(i % PALETTE_SIZE) + 1})`;
 
-// Shared chart chrome (#27897 followup — the "gorgeous target" visual language).
+// Shared chart chrome (the "gorgeous target" visual language).
 // Every chart type below consumes THESE — axis, grid, tooltip, legend — so bar,
 // line, area, pie AND scatter all inherit the same polish and theme-awareness.
 // IBM Plex Mono carries the figures/ticks; --dash-* + semantic tokens keep it

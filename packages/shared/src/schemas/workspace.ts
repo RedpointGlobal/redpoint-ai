@@ -14,7 +14,7 @@ export const McpConnectionSchema = z.object({
   url: z.string().optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   allowedTools: z.array(z.string()).optional(),
 }).superRefine((conn, ctx) => {
   if (conn.transport === "stdio" && conn.command) {

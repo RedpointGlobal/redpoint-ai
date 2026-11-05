@@ -1,5 +1,5 @@
 /**
- * #27897 — LOCAL mirror of the chart-spec contract for the web renderer.
+ * LOCAL mirror of the chart-spec contract for the web renderer.
  *
  * apps/web deliberately does NOT import the @redpoint-ai/shared *package*
  * (Next/webpack workspace-package traversal hiccup — see rpi-url-allowlist.ts /
@@ -20,7 +20,7 @@ export interface ChartSpec {
   xKey: string;
   yKeys: string[];
   stacked?: boolean;
-  /** Dashboard-panel column span (#27897 followup) — see the shared ChartSpec. */
+  /** Dashboard-panel column span — see the shared ChartSpec. */
   colSpan?: number;
   orientation?: "vertical" | "horizontal";
   innerRadius?: number;

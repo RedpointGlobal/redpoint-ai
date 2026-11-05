@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// #27897 followup — IBM Plex is the dataviz/dashboard typeface (Sans for labels,
+// IBM Plex is the dataviz/dashboard typeface (Sans for labels,
 // Mono for figures + axis ticks). Scoped to the render components via the
 // --font-plex-* vars; the rest of the app keeps Geist.
 const plexSans = IBM_Plex_Sans({

@@ -1,5 +1,5 @@
 /**
- * #27897 — the pure chart rendering-plan (chartLayout) + spec guard. Locks the
+ * The pure chart rendering-plan (chartLayout) + spec guard. Locks the
  * deterministic decisions <AgentChart> renders from: series, doughnut, stacking,
  * and the dataviz legend/grid defaults.
  */

@@ -32,8 +32,8 @@ export const SkillFrontmatterSchema = z.object({
    */
   clientIdFoundation: z.boolean().optional(),
   /**
-   * Opt in to the current-date preamble on THIS skill's dispatched sub-agent
-   * (#27897). Set ONLY on skills whose operations do relative-date math (e.g.
+   * Opt in to the current-date preamble on THIS skill's dispatched sub-agent.
+   * Set ONLY on skills whose operations do relative-date math (e.g.
    * rpi-interactions' runs op resolving "last 30 days"). Blanket-injecting the
    * date on every sub-agent tipped a borderline rpi-admin tool pick (list-clients
    * regression), so it's opt-in, mirroring clientIdFoundation. The ORCHESTRATOR
@@ -83,8 +83,8 @@ export interface Skill {
    */
   clientIdFoundation?: boolean;
   /**
-   * Opt in to the current-date preamble on this skill's dispatched sub-agent
-   * (#27897). Only skills whose ops do relative-date math set it (rpi-interactions).
+   * Opt in to the current-date preamble on this skill's dispatched sub-agent.
+   * Only skills whose ops do relative-date math set it (rpi-interactions).
    */
   dateGrounding?: boolean;
 }

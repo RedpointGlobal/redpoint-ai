@@ -1,5 +1,5 @@
 /**
- * #27897 (P2) — the dashboard contract. Locks the composed shape render_dashboard
+ * P2 — the dashboard contract. Locks the composed shape render_dashboard
  * and <AgentDashboard> depend on: panels required (≥1), tiles optional, columns
  * defaulted + bounded, and the reused ChartSpec/StatTile rules still enforced.
  */

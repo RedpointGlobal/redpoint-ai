@@ -1,5 +1,5 @@
 /**
- * #27897 (P2) — LOCAL mirror of the dashboard contract for the web renderer.
+ * P2 — LOCAL mirror of the dashboard contract for the web renderer.
  *
  * Same rationale as chart-spec.ts / stats-spec.ts: apps/web doesn't import the
  * @redpoint-ai/shared *package*, so the type is mirrored here. The AUTHORITATIVE
@@ -10,7 +10,7 @@
  *
  * Type-only: the runtime `isDashboardSpec` guard is gone — the server re-validates
  * with DashboardSpecSchema before returning the spec, so a malformed spec never
- * reaches the renderer by construction (#27957 Phase 2).
+ * reaches the renderer by construction (Phase 2).
  */
 import type { ChartSpec } from "./chart-spec";
 import type { StatTile } from "./stats-spec";

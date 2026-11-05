@@ -96,7 +96,7 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
     return c.json({ error: "messages array is required" }, 400);
   }
 
-  // #27828 — per-conversation tenant. The AI SDK / assistant-ui transport sends
+  // Per-conversation tenant. The AI SDK / assistant-ui transport sends
   // the chat id as `body.id` (already arriving; the app just hadn't read it).
   // It keys the conversation's active RPI client. Absent → no per-conversation
   // state this request (falls back to the deployment default).
@@ -126,7 +126,7 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
   // url = default instance.
   const { userRpiToken, userRpiUrl } = readRpiForwardContext(c);
 
-  // #27828 — resolve THIS conversation's active RPI client (tenant) for THIS
+  // Resolve THIS conversation's active RPI client (tenant) for THIS
   // user, threaded per-request into the MCP tools below as X-ClientID. Undefined
   // → getToolsForWorkspace falls back to RPI_DEFAULT_CLIENT_ID.
   //
@@ -212,7 +212,7 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
   // Ground the model in the CURRENT date, computed server-side per request (UTC).
   // Without it the model falls back to its stale training-cutoff date and resolves
   // relative ranges ("this month", "last 30 days") into a past window that returns
-  // zero rows for present-day data (#27897). Prefixed to the base prompt so it
+  // zero rows for present-day data. Prefixed to the base prompt so it
   // leads the composed router prompt (buildRouterSystemPrompt puts base first).
   systemPrompt = `${currentDatePreamble()}\n\n${systemPrompt}`;
 
@@ -281,7 +281,7 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
     Object.assign(tools, mcpTools);
   }
 
-  // #27828 — LLM-driven tenant switch. An apps/server ORCHESTRATOR tool (added to
+  // LLM-driven tenant switch. An apps/server ORCHESTRATOR tool (added to
   // the router's own toolset, both tiers), NOT an mcp-rpi tool: RBAC validation +
   // per-conversation persistence live server-side, so mcp-rpi's read-only write-
   // gate never touches it. Gated on an RPI connection (tenant = an RPI concept).
@@ -301,7 +301,7 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
     });
   }
 
-  // #27897 — render_chart: an orchestrator tool available in every tier. The
+  // render_chart: an orchestrator tool available in every tier. The
   // agent calls it with a schema-validated chart spec AFTER fetching data via the
   // RPI/DRH tools; assistant-ui renders <AgentChart> from the tool args. No data
   // plumbing (the data rides in the spec), so it's unconditional.
@@ -312,12 +312,12 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
   // including the no-skills branch that skips buildRouterSystemPrompt.
   systemPrompt = `${systemPrompt}\n\n---\n\n${CHART_STEERING}`;
 
-  // #27897 P2 — render_stats: KPI stat-tiles, the summary cards atop a dashboard
+  // P2 — render_stats: KPI stat-tiles, the summary cards atop a dashboard
   // view. Orchestrator tool, every tier (like render_chart); args ride to the
   // frontend tool-UI (<StatTiles>). No data plumbing (data rides in the spec).
   tools.render_stats = createRenderStatsTool();
 
-  // #27957 P2 — render_view_dashboard: the DETERMINISTIC dashboard. The LLM picks
+  // P2 — render_view_dashboard: the DETERMINISTIC dashboard. The LLM picks
   // a viewId + params; execute() fetches (via the authed per-user mcpTools map)
   // and assembles the spec in code, then RETURNS it. The tool-UI renders from the
   // RESULT (<AgentDashboard>), so composition leaves the model — no panel-drop
@@ -342,7 +342,8 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
   // Telemetry event helper — appends a TelemetryEvent to the per-workspace
   // trace buffer. Verbatim shape matches the terminal agent's TelemetryEvent
   // so a web export and a terminal export are drop-in interchangeable.
-  const emit = (event: TelemetryEvent) => appendTrace(workspaceId, event);
+  // The caller's own trace (per workspace AND user — lib/trace-buffer.ts).
+  const emit = (event: TelemetryEvent) => appendTrace(workspaceId, tenantUserId, event);
   let stepCounter = 0;
 
   // createAgentUIStreamResponse's onFinish event carries NO usage (only messages/
@@ -509,6 +510,8 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
         }
       },
       onError: (error) => {
+        // The turn's per-request MCP sessions end with it (release is idempotent).
+        void mcpManager.release(mcpTools);
         activeSessions.dec();
         runsTotal.inc({ status: "failed", provider: config.provider.type });
         const msg = error instanceof Error ? error.message : String(error);
@@ -528,6 +531,8 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
         return msg;
       },
       onFinish: async () => {
+        // The turn's per-request MCP sessions end with it (release is idempotent).
+        await mcpManager.release(mcpTools);
         // createAgentUIStreamResponse's onFinish event carries NO usage (only
         // messages/finishReason) — the turn's token totals were accumulated per
         // step in onStepFinish (usageAcc). Use those here.
@@ -603,6 +608,7 @@ chatRoutes.post("/:workspaceId/chat", async (c) => {
       },
     });
   } catch (error) {
+    await mcpManager.release(mcpTools);
     activeSessions.dec();
     runsTotal.inc({ status: "failed", provider: config.provider.type });
     logAudit({

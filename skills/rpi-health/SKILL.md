@@ -7,9 +7,6 @@ clientIdFoundation: true
 mcpToolFilter:
   - get_system_health_availability
   - get_system_health_monitoring_overview
-operations:
-  availability: [get_system_health_availability]
-  overview: [get_system_health_monitoring_overview]
 maxSteps: 5
 tags: [rpi, health, monitoring]
 ---
@@ -38,6 +35,19 @@ Apply foundation guidance: respect `clientId` where applicable, surface raw erro
 |---|---|
 | "Is the system up?" / "any alerts?" / "is RPI healthy?" | `get_system_health_availability` |
 | "Overall system-health overview" / "monitoring overview" | `get_system_health_monitoring_overview` |
+
+**Pick by what was asked — both tools are always on hand.** Any
+"is it up / is it healthy / any alerts" question is
+`get_system_health_availability`.
+`get_system_health_monitoring_overview` ONLY when the user explicitly asks for the
+monitoring overview / monitoring view / monitoring dashboard.
+
+## No operations — the whole menu, always
+
+This skill declares no `operations:`: its two tools are one small menu, and the
+sub-agent always gets both. An operation chosen from the question could only hide
+the tool it needed — the monitoring overview under an availability operation — so
+none is offered.
 
 ## Common workflow — "Is the system healthy?"
 

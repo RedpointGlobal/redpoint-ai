@@ -103,6 +103,27 @@ export const EXAMPLE_VALUES: Record<string, string> = {
   RPI_URL_ALLOWLIST: "",
 };
 
+/**
+ * Binary-template overrides. The standalone executables run in service-credential
+ * mode (every call as the account in the file, no per-user sign-in), so their
+ * AUTH_REQUIRED ships false — the hosted app's stays true (SSO). Same value and
+ * wording as the standalone servers' own binary-env contract.
+ */
+export const BINARY_OVERRIDES: Partial<Record<Scope, Record<string, { value: string; comment: string }>>> = {
+  "mcp-rpi": {
+    AUTH_REQUIRED: {
+      value: "false",
+      comment: "false = every call runs as the RPI account below (no per-user sign-in); the server then answers this machine only (127.0.0.1)",
+    },
+  },
+  "mcp-drh": {
+    AUTH_REQUIRED: {
+      value: "false",
+      comment: "false = every call runs as the DRH account below (no per-user sign-in)",
+    },
+  },
+};
+
 export interface EnvVarDef {
   key: string;
   scopes: Scope[];
@@ -202,13 +223,13 @@ export const ALT_PROVIDER_BLOCK = `# --- Alternative LLM providers (placeholders
 
 const SECRET_MARKER = "  (secret — leave empty here)";
 
-function renderVar(v: EnvVarDef): string {
+function renderVar(v: EnvVarDef, override?: { value: string; comment: string }): string {
   const lines: string[] = [];
   // Idempotent: strip any prior marker so re-rendering an already-rendered
   // template (binary templates are derived from the rendered .env.example)
   // never doubles it. Multi-line comments render one `#` line each; the secret
   // marker goes on the LAST line only.
-  const comment = v.comment.replace(/\s*\(secret — leave empty here\)/g, "").trimEnd();
+  const comment = (override?.comment ?? v.comment).replace(/\s*\(secret — leave empty here\)/g, "").trimEnd();
   if (comment) {
     const cl = comment.split("\n");
     cl.forEach((ln, i) => {
@@ -216,7 +237,7 @@ function renderVar(v: EnvVarDef): string {
       lines.push(`# ${ln}${last && v.secret ? SECRET_MARKER : ""}`);
     });
   }
-  lines.push(`${v.key}=${exampleValue(v.key)}`);
+  lines.push(`${v.key}=${override?.value ?? exampleValue(v.key)}`);
   return lines.join("\n");
 }
 
@@ -243,7 +264,7 @@ export function renderEnvExample(vars: EnvVarDef[]): string {
     b.vars.push(v);
   }
   const body = blocks
-    .map((b) => `#@scope: ${b.scopes.join(", ")}\n${b.vars.map(renderVar).join("\n\n")}`)
+    .map((b) => `#@scope: ${b.scopes.join(", ")}\n${b.vars.map((v) => renderVar(v)).join("\n\n")}`)
     .join("\n\n");
   return `${header}\n${body}\n\n${ALT_PROVIDER_BLOCK}\n`;
 }
@@ -255,7 +276,8 @@ export function sliceForScope(vars: EnvVarDef[], scope: Scope): EnvVarDef[] {
 
 /**
  * Render a per-binary scoped `.env.example` (bundled in the zip). Only the given
- * scope's vars, secrets empty. Cross-scope keys are absent by construction.
+ * scope's vars, secrets empty, BINARY_OVERRIDES applied. Cross-scope keys are
+ * absent by construction.
  */
 export function renderBinaryTemplate(vars: EnvVarDef[], scope: Scope, title: string): string {
   const slice = sliceForScope(vars, scope);
@@ -263,7 +285,8 @@ export function renderBinaryTemplate(vars: EnvVarDef[], scope: Scope, title: str
 # Copy this file to \`.env\` in the same folder as the binary, then fill in your values.
 # This template carries ONLY the keys this server uses (least privilege); secrets are empty.
 `;
-  return `${header}\n${slice.map(renderVar).join("\n\n")}\n`;
+  const overrides = BINARY_OVERRIDES[scope] ?? {};
+  return `${header}\n${slice.map((v) => renderVar(v, overrides[v.key])).join("\n\n")}\n`;
 }
 
 // ---------------------------------------------------------------------------

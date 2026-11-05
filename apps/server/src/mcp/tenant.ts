@@ -1,5 +1,5 @@
 /**
- * #27828 — LLM-driven multi-tenant (CLIENT / X-ClientID) switching.
+ * LLM-driven multi-tenant (CLIENT / X-ClientID) switching.
  *
  * "Environment via the location field; TENANT via the LLM." The agent lists the
  * clients the user can reach (existing get_user_client_list) and switches the
@@ -8,7 +8,7 @@
  * into the RPI tool calls (never a process-global) so one conversation's switch
  * cannot repoint another conversation or another user.
  *
- * Composable-target note (Mark's forward-looking design): the per-request tenant
+ * Composable-target note (forward-looking design): the per-request tenant
  * is modeled as one clean value alongside the per-request {url, token} the
  * Environment-Location work already threads — so a future cross-ENVIRONMENT
  * ({url,token,clientId} per call) can extend this same pattern. This module owns

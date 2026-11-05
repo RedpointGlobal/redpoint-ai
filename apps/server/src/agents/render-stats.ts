@@ -1,5 +1,5 @@
 /**
- * #27897 (P2) — the render_stats orchestrator tool.
+ * P2 — the render_stats orchestrator tool.
  *
  * Companion to render_chart: the agent emits a row of KPI stat-tiles (a
  * schema-validated spec, never JS) and assistant-ui renders the tool call as
@@ -8,16 +8,16 @@
  * strictly server-side.
  *
  * Single source of truth: the LLM-facing inputSchema is derived from the shared
- * Zod StatsSpecSchema (zod-to-json-schema), and the same Zod schema is the strict
+ * Zod StatsSpecSchema (zod's native z.toJSONSchema), and the same Zod schema is the strict
  * validation gate in execute.
  */
 import { tool, jsonSchema, type Tool } from "ai";
 import { StatsSpecSchema } from "@redpoint-ai/shared";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { z } from "zod";
 
-const statsInputSchema = zodToJsonSchema(StatsSpecSchema, {
-  $refStrategy: "none",
-  target: "jsonSchema7",
+const statsInputSchema = z.toJSONSchema(StatsSpecSchema, {
+  target: "draft-7",
+  unrepresentable: "any",
 });
 
 const DESCRIPTION =

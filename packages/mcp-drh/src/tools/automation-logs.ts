@@ -28,7 +28,7 @@ export function registerAutomationLogTools(server: McpServer, client: DRHApiClie
       title: "Search Automation Logs",
       description: "Search automation logs. POST /automations/search.",
       inputSchema: {
-        body: z.record(z.unknown()).describe("Search request payload."),
+        body: z.record(z.string(), z.unknown()).describe("Search request payload."),
         clientId: drhClientIdSchema,
       },
       annotations: READ_ONLY,
@@ -78,7 +78,7 @@ export function registerAutomationLogTools(server: McpServer, client: DRHApiClie
       description: "Partially update an automation log. PATCH /automations/{id}.",
       inputSchema: {
         automationId: automationIdArg,
-        body: z.record(z.unknown()).describe("Automation-log patch payload."),
+        body: z.record(z.string(), z.unknown()).describe("Automation-log patch payload."),
         clientId: drhClientIdSchema,
       },
       annotations: MUTATING,
@@ -104,7 +104,7 @@ export function registerAutomationLogTools(server: McpServer, client: DRHApiClie
       title: "Create Test Automation Log",
       description: "Create a test automation log. POST /automations/test.",
       inputSchema: {
-        body: z.record(z.unknown()).describe("Test automation-log payload."),
+        body: z.record(z.string(), z.unknown()).describe("Test automation-log payload."),
         clientId: drhClientIdSchema,
       },
       annotations: MUTATING,

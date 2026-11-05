@@ -99,7 +99,7 @@ export function registerAggsTools(server: McpServer, client: DRHApiClient) {
       description: "Update an Aggs schedule. PUT /aggs/schedule/{id}.",
       inputSchema: {
         aggsScheduleId: aggsScheduleIdArg,
-        body: z.record(z.unknown()).describe("Aggs schedule payload."),
+        body: z.record(z.string(), z.unknown()).describe("Aggs schedule payload."),
         clientId: drhClientIdSchema,
       },
       annotations: MUTATING,

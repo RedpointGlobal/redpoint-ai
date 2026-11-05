@@ -44,13 +44,14 @@ Two sibling test files, both gated by `RUN_ACCURACY_EVALUATION=1`:
   scenario sends a prompt via the real chat endpoint, captures the
   workspace trace, asserts the agent dispatched to `expectedSkill`
   (via `allDispatches.includes` — accepts LLM-typo self-corrections;
-  reports `firstDispatchDeviations` as a side metric). 14 scenarios cover
-  list-class verbs, the count-routing fix guard, 4 Tier-A
+  reports `firstDispatchDeviations` as a side metric). 57 RPI scenarios
+  (plus 9 Data Readiness Hub scenarios in the DRH workspace) cover, among
+  others, list-class verbs, the count-routing fix guard, 4 Tier-A
   domain-recognition / sub-skill scenarios (v1.1.4), and 2 misrouting
   guards for the SKILL.md authoring discipline
   (`routing-audience-via-interaction`, `routing-interaction-run-counts`).
 
-- **`chain.test.ts`** — name-prompted list → get-by-name chains
+- **`chain.test.ts`** — 5 name-prompted list → get-by-name chains
   (v1.1.3). `beforeAll` runs a one-shot cache pre-flight per cacheKey
   (`clients` / `audiences` / `interactions` / `selectionRules`) and
   reads the first record's name directly from the RPI Integration API
@@ -59,7 +60,12 @@ Two sibling test files, both gated by `RUN_ACCURACY_EVALUATION=1`:
   with that discovered name and asserts **Path A** — dispatch + name in
   response text + a matching `rpi__get_<entity>_by_(name|id)` call in
   `subAgentToolCalls` with the cached name in the args. Workspace-empty
-  for an entity type → scenario logs SKIP (never fails).
+  for an entity type → scenario logs SKIP (never fails). The setup reads
+  with the service account's token; the client chain seeds from the
+  caller's own tenants. A key whose setup read fails fails only its own
+  chain. Reading a client by name is a cluster-admin read (refused for a
+  non-admin login), so that chain is judged on its route and its call, not
+  on the reply repeating the name.
 
 The Path A tool-call assertion is powered by **v1.4 minimal sub-agent
 telemetry** (`packages/skills/src/router.ts` — `createSkillRouterTool`

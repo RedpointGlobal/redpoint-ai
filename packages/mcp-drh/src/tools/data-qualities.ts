@@ -82,7 +82,7 @@ export function registerDataQualityTools(server: McpServer, client: DRHApiClient
       title: "Create Data Quality",
       description: "Create a data quality. POST /data-qualities.",
       inputSchema: {
-        body: z.record(z.unknown()).describe("Data-quality payload."),
+        body: z.record(z.string(), z.unknown()).describe("Data-quality payload."),
         clientId: drhClientIdSchema,
       },
       annotations: MUTATING,

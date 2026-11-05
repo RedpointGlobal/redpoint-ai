@@ -17,13 +17,15 @@ export interface AgentCardInputs {
   skills: Skill[];
   /** Base URL where this A2A server is reachable (e.g. "http://localhost:4100") */
   baseUrl: string;
+  /** The inbound auth scheme; oidc advertises the realm's discovery document. Default: bearer. */
+  auth?: { mode: "bearer" } | { mode: "oidc"; issuer: string };
 }
 
 /**
  * Build the Agent Card for this agent from the currently loaded skills.
  * Pure function — deterministic output given the same input.
  */
-export function buildAgentCard({ skills, baseUrl }: AgentCardInputs): AgentCard {
+export function buildAgentCard({ skills, baseUrl, auth }: AgentCardInputs): AgentCard {
   return {
     protocolVersion: "0.3.0",
     name: "redpoint-ai-agent",
@@ -43,12 +45,24 @@ export function buildAgentCard({ skills, baseUrl }: AgentCardInputs): AgentCard 
       description: skill.description,
       tags: skill.tags ?? [],
     })),
-    securitySchemes: {
-      bearer: {
-        type: "http",
-        scheme: "bearer",
-      },
-    },
-    security: [{ bearer: [] }],
+    ...(auth?.mode === "oidc"
+      ? {
+          securitySchemes: {
+            oidc: {
+              type: "openIdConnect",
+              openIdConnectUrl: `${auth.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
+            },
+          },
+          security: [{ oidc: [] }],
+        }
+      : {
+          securitySchemes: {
+            bearer: {
+              type: "http",
+              scheme: "bearer",
+            },
+          },
+          security: [{ bearer: [] }],
+        }),
   };
 }

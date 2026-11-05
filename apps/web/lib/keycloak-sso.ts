@@ -1,12 +1,9 @@
 /**
- * SSO (Keycloak) — password-grant login helpers for the web app.
- *
- * This is the zero-external-dependency SSO path: it is the same OAuth2 password
- * (direct-access) grant the rpi-native provider uses, pointed at the realm's
- * Keycloak token endpoint instead of RPI's /connect/token. The client is PUBLIC
- * (no client_secret). The Keycloak-issued JWT is already accepted by RPI
- * directly and by the apps/server OIDC branch, and stable-id metering keys it
- * to rpi:<stableId> automatically — so no server change is needed.
+ * SSO (Keycloak) — helpers for the OIDC redirect provider (authorization_code +
+ * PKCE, id "sso") and its session refresh. The client is PUBLIC (no
+ * client_secret). The Keycloak-issued JWT is accepted by RPI directly and by the
+ * apps/server OIDC branch, and stable-id metering keys it to rpi:<stableId>.
+ * SSO has no password (direct-access) grant: redirect only.
  *
  * CONFIG BY DISCOVERY (mirrors packages/mcp-rpi/src/client/oidc-discovery.ts):
  * we read RPI's unauthenticated login-settings, find the OpenID entry, and
@@ -43,7 +40,7 @@ export interface KeycloakSsoConfig {
    * discovers authorize/token/jwks from this via .well-known. */
   issuer: string;
   /** PUBLIC Keycloak token endpoint (issuer + /protocol/openid-connect/token) —
-   * used directly by the interim password/refresh grants. */
+   * used directly by the refresh grant. */
   tokenEndpoint: string;
   /** Public client id (e.g. `rpi`). */
   clientId: string;
@@ -149,7 +146,7 @@ export interface OidcAccountLike {
 
 /**
  * Map the OIDC redirect-flow `account` into the same rpi* session shape the
- * password grant produces, so everything downstream (X-RPI-Token forwarding,
+ * native RPI login produces, so everything downstream (X-RPI-Token forwarding,
  * lazy refresh keyed on rpiAuthSource, metering) is identical. `expires_at` is
  * epoch SECONDS per the OAuth2 spec; we convert to epoch ms. Falls back to a
  * conservative +60s when the provider omits it (forces an early refresh rather
@@ -175,51 +172,6 @@ function mapTokenResponse(data: KeycloakTokenResponse): KeycloakSession {
     rpiRefreshToken: data.refresh_token,
     rpiExpiresAt: Date.now() + data.expires_in * 1000,
   };
-}
-
-/**
- * Password (direct-access) grant against the discovered PUBLIC Keycloak token
- * endpoint. PUBLIC client — deliberately NO client_secret. Returns the mapped
- * rpi* session fields, or null on any failure (logged server-side).
- */
-export async function keycloakPasswordGrant(
-  username: string,
-  password: string,
-): Promise<KeycloakSession | null> {
-  const sso = await discoverKeycloakSso();
-  if (!sso) {
-    console.error(
-      "[keycloak-sso] no public Keycloak issuer/clientId discoverable (login-settings + env both empty)",
-    );
-    return null;
-  }
-  try {
-    const res = await fetch(sso.tokenEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "password",
-        username,
-        password,
-        client_id: sso.clientId,
-        scope: "openid",
-        // PUBLIC client — NO client_secret on purpose.
-      }),
-    });
-    if (!res.ok) {
-      const body = (await res.text().catch(() => "<unreadable>"))
-        .replace(/\s+/g, " ")
-        .slice(0, 300);
-      console.error(
-        `[keycloak-sso] token endpoint rejected: ${res.status} ${res.statusText} — ${body}`,
-      );
-      return null;
-    }
-    return mapTokenResponse((await res.json()) as KeycloakTokenResponse);
-  } catch (err) {
-    console.error("[keycloak-sso] login failed:", err);
-    return null;
-  }
 }
 
 /**

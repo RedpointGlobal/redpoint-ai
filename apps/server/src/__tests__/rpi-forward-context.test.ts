@@ -1,5 +1,5 @@
 /**
- * Panel-401 fix (#27828 follow-up) — the per-request RPI forwarding context.
+ * Panel-401 fix (tenant-switch follow-up) — the per-request RPI forwarding context.
  *
  * Bug: the info-panel showed MCP "rpi" unreachable (401) whenever a user was on a
  * NON-default Environment Location, because the runtime-status / tools handlers
@@ -68,10 +68,17 @@ mock.module("../store/db.js", () => ({ db: testDb }));
 
 // Record every getToolsForWorkspace call's args; return an empty tool set.
 const toolCalls: unknown[][] = [];
+const loaded: object[] = [];
+const released: object[] = [];
 const stubMcpManager = {
   getToolsForWorkspace: (...args: unknown[]) => {
     toolCalls.push(args);
-    return Promise.resolve({});
+    const tools = {};
+    loaded.push(tools);
+    return Promise.resolve(tools);
+  },
+  release: async (tools: object) => {
+    released.push(tools);
   },
   getTransport: () => undefined,
   closeWorkspace: async () => {},
@@ -121,6 +128,8 @@ describe("runtime-status / tools handlers thread x-rpi-url into getToolsForWorks
     expect(res.status).toBe(200);
     expect(toolCalls.length).toBeGreaterThan(0);
     expect(urlArgsSeen()).toContain(LOC);
+    // A listing: its per-request MCP sessions end before the response.
+    expect(released).toContain(loaded[loaded.length - 1]!);
   });
 
   it("GET /runtime-status with X-RPI-URL → threaded (probe targets the rep's instance)", async () => {

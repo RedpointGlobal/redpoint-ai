@@ -1,5 +1,5 @@
 /**
- * #27897 (P2) — render_stats tool. inputSchema derived from the shared Zod
+ * P2 — render_stats tool. inputSchema derived from the shared Zod
  * StatsSpecSchema; execute strictly re-validates. Valid → confirmation naming the
  * labels; invalid → an actionable rejection the agent can retry against.
  */

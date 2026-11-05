@@ -1,5 +1,5 @@
 /**
- * #27957 (Phase 2) — the "interaction-run-counts" view: the FIRST deterministic,
+ * Phase 2 — the "interaction-run-counts" view: the FIRST deterministic,
  * code-assembled dashboard. Data comes from the RPI 7.8 server-side GROUP BY
  * (mcp-rpi `get_interaction_run_counts`); the layout is assembled PURELY in code
  * (`templateFn`), never composed by the LLM.

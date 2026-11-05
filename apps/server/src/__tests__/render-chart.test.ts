@@ -1,5 +1,5 @@
 /**
- * #27897 — render_chart tool. Its inputSchema is derived from the shared Zod
+ * render_chart tool. Its inputSchema is derived from the shared Zod
  * ChartSpecSchema, and execute strictly re-validates (the Zod .refine()s the JSON
  * Schema can't express). Valid spec → confirmation; invalid → an actionable
  * rejection the agent can retry against.
@@ -83,7 +83,7 @@ describe("CHART_STEERING (Bug 1 — chart-request → render_chart call)", () =>
     expect(lc).toContain("not on every request that happens to return data");
   });
 
-  it("dashboard steering (#27957): overview/report/trend → render_view_dashboard", () => {
+  it("dashboard steering: overview/report/trend → render_view_dashboard", () => {
     const lc = CHART_STEERING.toLowerCase();
     // Triggers on dashboard/report/overview/trend vocabulary.
     for (const w of ["dashboard", "report", "overview", "trend"]) {

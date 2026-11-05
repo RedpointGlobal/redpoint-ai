@@ -76,14 +76,14 @@ describe("clientId-foundation dedup", () => {
     expect(CLIENTID_FOUNDATION).toContain("401");
   });
 
-  it("dateGrounding is set ONLY on rpi-interactions (targeted date injection #27897)", async () => {
+  it("dateGrounding is set ONLY on rpi-interactions (targeted date injection)", async () => {
     const skills = await loadSkillsFromDirectory(SKILLS_DIR);
     const grounded = skills.filter((s) => s.dateGrounding === true).map((s) => s.name).sort();
     // Blanket date injection regressed list-clients; only the runs-date-math skill opts in.
     expect(grounded).toEqual(["rpi-interactions"]);
   });
 
-  it("carries the ambient-active-tenant guidance (compound-turn #27828 fix)", () => {
+  it("carries the ambient-active-tenant guidance (compound-turn fix)", () => {
     expect(CLIENTID_FOUNDATION).toContain("Ambient active tenant");
     expect(CLIENTID_FOUNDATION).toContain("set_active_tenant");
     // The core instruction: don't re-thread the tenant on a compound turn.

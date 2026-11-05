@@ -15,10 +15,6 @@ mcpToolFilter:
   - list_attribute_list_decision_rule_lists
   - get_decision_rule_available_criterion
   - get_decision_rule_available_sql_database_criterion
-operations:
-  rules: [get_database_decision_rule, get_json_decision_rule, get_web_decision_rule, get_orchestration_decision_rule, get_attribute_list_decision_rule]
-  related: [list_web_decision_rule_adaptors, list_orchestration_decision_rule_dynamic_content_files, list_attribute_list_decision_rule_lists]
-  criteria: [get_decision_rule_available_criterion, get_decision_rule_available_sql_database_criterion]
 maxSteps: 5
 tags: [rpi, decision-rules, decisioning]
 ---
@@ -49,15 +45,12 @@ Getters are by rule **ID**. There is no list-all-decision-rules tool here — re
 rule's id via the file-system card (the rpi-folders / file-info lookup) or by folder
 if the user gives a name.
 
-## Operations (menu-narrowing)
+## No operations — the whole menu, always
 
-- **rules** — the five by-type getters (database/json/web/orchestration/attribute-list).
-- **related** — the per-type sub-lists (web adaptors, orchestration dynamic-content
-  files, attribute-list decision-rule lists).
-- **criteria** — the fields a rule can be built on: `get_decision_rule_available_criterion`
-  (generic) vs `get_decision_rule_available_sql_database_criterion` (SQL-definition-sourced).
-
-Missing/unknown operation falls back to the full inventory (safe).
+This skill declares no `operations:`: its ten tools are one small menu, and the
+sub-agent always gets all of them. An operation chosen from the question can only
+hide the tool it needed — a type's sub-list under another type, or a sub-list under
+a getter group — so none is offered.
 
 ## Disambiguation (what this skill is NOT)
 

@@ -57,7 +57,7 @@ const actionSkill = makeSkill({
   mcpToolFilter: ["email_send"],
 });
 
-// A skill that opts into date grounding (#27897) — only these get the date preamble.
+// A skill that opts into date grounding — only these get the date preamble.
 const dateSkill = makeSkill({
   name: "runs-report",
   type: "action",
@@ -155,7 +155,7 @@ describe("createSkillRouterTool", () => {
     expect(system).not.toContain(GROUNDING_PREAMBLE);
   });
 
-  it("prepends the current date ONLY to dateGrounding skills (#27897 targeted fix)", async () => {
+  it("prepends the current date ONLY to dateGrounding skills (targeted fix)", async () => {
     const tool = createSkillRouterTool(registry, fakeModel, getToolsForSkill);
     await tool.execute!(
       { skillName: "runs-report", input: "runs dashboard for last 30 days" },
@@ -266,6 +266,101 @@ describe("createSkillRouterTool", () => {
 
     expect(getToolsForSkill).toHaveBeenCalledTimes(1);
     expect(getToolsForSkill).toHaveBeenCalledWith(undefined);
+  });
+
+  it("stops offering tool calls once the sub-agent keeps repeating a blocked call", async () => {
+    // The guard and the step hook share one per-dispatch state: drive the
+    // guarded tool the way a looping sub-agent would, then ask the hook.
+    const seen: Array<{ toolChoice?: string }> = [];
+    mockGenerateText.mockImplementation((async (opts: {
+      tools: Record<string, { execute: (a: unknown, o: unknown) => Promise<unknown> }>;
+      prepareStep: (a: { messages: unknown[]; stepNumber: number }) => { toolChoice?: string };
+    }) => {
+      const call = () => opts.tools.email_send!.execute({ to: "a" }, {});
+      const step = (stepNumber: number) =>
+        seen.push(opts.prepareStep({ messages: [{ role: "user", content: "q" }], stepNumber }));
+      step(0);
+      await call(); // runs
+      step(1);
+      await call(); // runs
+      step(2);
+      await call(); // trip 1: warned
+      step(3);
+      await call(); // trip 2: stuck
+      step(4);
+      return { text: "answer", toolCalls: [], steps: [] };
+    }) as never);
+    getToolsForSkill = mock(() =>
+      Promise.resolve({ email_send: { description: "d", execute: async () => ({ ok: true }) } }),
+    );
+
+    const tool = createSkillRouterTool(registry, fakeModel, getToolsForSkill);
+    await tool.execute!(
+      { skillName: "send-email", input: "Do it" },
+      { toolCallId: "t-guard", messages: [], abortSignal: undefined as any },
+    );
+
+    expect(seen.map((s) => s.toolChoice)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "none",
+    ]);
+  });
+
+  it("keeps tools after a one-step parallel burst, so the sub-agent can still call the tool it needs", async () => {
+    const seen: Array<{ toolChoice?: string }> = [];
+    let otherRan = 0;
+    mockGenerateText.mockImplementation((async (opts: {
+      tools: Record<string, { execute: (a: unknown, o: unknown) => Promise<unknown> }>;
+      prepareStep: (a: { messages: unknown[]; stepNumber: number }) => { toolChoice?: string };
+    }) => {
+      const step = (stepNumber: number) =>
+        seen.push(opts.prepareStep({ messages: [{ role: "user", content: "q" }], stepNumber }));
+      step(0);
+      // One step: the same call 10 times in parallel (2 run, 8 short-circuit).
+      await Promise.all(Array.from({ length: 10 }, () => opts.tools.email_send!.execute({ to: "a" }, {})));
+      step(1);
+      await opts.tools.email_status!.execute({ id: "1" }, {}); // the tool it still needed
+      step(2);
+      return { text: "answer", toolCalls: [], steps: [] };
+    }) as never);
+    getToolsForSkill = mock(() =>
+      Promise.resolve({
+        email_send: { description: "d", execute: async () => ({ ok: true }) },
+        email_status: { description: "s", execute: async () => { otherRan += 1; return { ok: true }; } },
+      }),
+    );
+
+    const tool = createSkillRouterTool(registry, fakeModel, getToolsForSkill);
+    await tool.execute!(
+      { skillName: "send-email", input: "Do it" },
+      { toolCallId: "t-burst", messages: [], abortSignal: undefined as any },
+    );
+
+    expect(seen.map((s) => s.toolChoice)).toEqual([undefined, undefined, undefined]);
+    expect(otherRan).toBe(1);
+  });
+
+  it("makes the last step the skill's budget allows text-only", async () => {
+    const seen: Array<{ toolChoice?: string }> = [];
+    mockGenerateText.mockImplementation((async (opts: {
+      prepareStep: (a: { messages: unknown[]; stepNumber: number }) => { toolChoice?: string };
+    }) => {
+      for (const stepNumber of [0, 8, 9]) {
+        seen.push(opts.prepareStep({ messages: [{ role: "user", content: "q" }], stepNumber }));
+      }
+      return { text: "answer", toolCalls: [], steps: [] };
+    }) as never);
+
+    const tool = createSkillRouterTool(registry, fakeModel, getToolsForSkill);
+    await tool.execute!(
+      { skillName: "send-email", input: "Do it" }, // maxSteps 10
+      { toolCallId: "t-budget", messages: [], abortSignal: undefined as any },
+    );
+
+    expect(seen.map((s) => s.toolChoice)).toEqual([undefined, undefined, "none"]);
   });
 
   it("reports toolCallCount and stepCount from generateText result", async () => {

@@ -13,9 +13,6 @@ mcpToolFilter:
   - list_cluster_external_users
   - get_cluster_external_user
   - get_cluster_external_user_clients
-operations:
-  internal-users: [list_cluster_users, get_cluster_user, get_cluster_user_by_name, get_cluster_user_clients, get_cluster_user_profile]
-  external-users: [list_cluster_external_users, get_cluster_external_user, get_cluster_external_user_clients]
 maxSteps: 5
 tags: [rpi, cluster, users, administration]
 ---
@@ -39,18 +36,22 @@ federated/external (SSO) identities.
 
 Apply foundation guidance: respect `clientId`, show names not IDs.
 
-## Tool inventory & operations
+## Tool inventory
 
-- **internal-users** — internal cluster accounts: `list_cluster_users`,
+- **Internal users** — internal cluster accounts: `list_cluster_users`,
   `get_cluster_user` (by id) / `get_cluster_user_by_name`, `get_cluster_user_clients`
   (the clients that user can reach), `get_cluster_user_profile` (a NAMED user's
   cluster profile — not the caller's).
-- **external-users** — federated/SSO cluster identities (distinct from the internal
+- **External users** — federated/SSO cluster identities (distinct from the internal
   accounts): `list_cluster_external_users`, `get_cluster_external_user` (by id),
   `get_cluster_external_user_clients` (that external user's reachable clients).
 
-Missing/unknown operation falls back to the full 8-tool inventory (all
-cluster-user reads — a small, coherent menu).
+## No operations — the whole menu, always
+
+This skill declares no `operations:`: its eight tools are one small, coherent
+menu, and the sub-agent always gets all of them. An operation chosen from the
+question could only hide the tool it needed — the external list under internal
+users, or the internal list under external users — so none is offered.
 
 ## Internal vs external
 

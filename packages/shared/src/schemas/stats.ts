@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * #27897 (P2) — the STAT-TILE (KPI) contract shared by the render_stats tool
+ * P2 — the STAT-TILE (KPI) contract shared by the render_stats tool
  * (apps/server, validation) and <StatTiles> (apps/web, rendering).
  *
  * A dashboard building block: the agent emits a row of headline KPI tiles

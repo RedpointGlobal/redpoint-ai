@@ -1,5 +1,5 @@
 /**
- * #27897 — the chart-spec contract. Locks the shape both the render_chart tool
+ * The chart-spec contract. Locks the shape both the render_chart tool
  * and <AgentChart> depend on: each P1 type validates, and the strict rules
  * (pie→1 yKey, innerRadius pie-only, keys-exist, no extra props) reject.
  */

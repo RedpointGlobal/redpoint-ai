@@ -1,5 +1,5 @@
 /**
- * #27957 (Phase 2) — the view-dashboard registry.
+ * Phase 2 — the view-dashboard registry.
  *
  * The deterministic replacement for LLM-composed dashboards. The LLM's only job is
  * intent + params: pick a `viewId` and extract a small param set. CODE fetches the

@@ -33,7 +33,25 @@ export interface Scenario {
    */
   forbiddenToolNamePattern?: RegExp;
   /**
-   * ORCHESTRATOR-tool routing guard (Phase 2, #27957). When set, the scenario is a
+   * Menu-gap floor: the Pattern A operations the router has been SEEN to pass to
+   * `expectedSkill` for this prompt (seeded from repeated full-router runs; a floor,
+   * not a closed set). The unit lint (menu-gap-lint.test.ts) holds the required tool
+   * (`expectedToolNamePattern`) in every listed op's menu; the routing eval's
+   * tripwire (`menuGapTrips`) catches any OTHER declared op the router picks whose
+   * menu lacks it. An op the skill doesn't declare, or no op, gets the full tool
+   * filter, so it never appears here. `[]` = only those fallbacks were seen.
+   */
+  routedOps?: string[];
+  /**
+   * With `expectedToolNamePattern`: a call to that tool must ALSO pass this check on
+   * its arguments (e.g. the DRH data-quality tools' `count` is a look-back window in
+   * days, so a small count returns an empty list even when history exists).
+   */
+  expectedToolArgs?: (args: Record<string, unknown>) => boolean;
+  /** The final text must match NONE of these (e.g. a false "no data available"). */
+  textNotMatches?: RegExp[];
+  /**
+   * ORCHESTRATOR-tool routing guard (Phase 2). When set, the scenario is a
    * DIRECT orchestrator-tool decision, NOT a skill dispatch — the parent must call a
    * tool whose name matches this (e.g. `render_view_dashboard` for a dashboard
    * prompt, which Phase 2 routes deterministically rather than via a skill). Pair
@@ -46,14 +64,57 @@ export interface Scenario {
   note?: string;
 }
 
+/**
+ * The DRH data-quality tools (hygiene scores, match confidence, processed matches) take
+ * `count` as a look-back window in DAYS. A rep's question with no period must look back
+ * at least a year, or recent-enough history reads as empty.
+ */
+export const wideLookBack = (args: Record<string, unknown>): boolean => typeof args.count === "number" && args.count >= 365;
+/** Answers that claim the data isn't there. */
+export const NO_DATA_CLAIMS: RegExp[] = [
+  /\b(is|are) (currently )?no (hygiene|match|data|records|history)/i,
+  /\bno (hygiene score|hygiene|match[- ]confidence)[^.]{0,40}\b(history|data|records|scores)\b[^.]{0,30}\b(available|found)\b/i,
+];
+
+/** True when an op menu (base tool names) holds a tool the scenario's namespaced pattern matches. */
+export function menuHoldsTool(pattern: RegExp, menu: readonly string[]): boolean {
+  return menu.some((t) => pattern.test(t) || pattern.test(`rpi__${t}`) || pattern.test(`drh__${t}`));
+}
+
+/**
+ * Menu-gap tripwire: for each dispatch to the scenario's skill that passed an
+ * operation the skill DECLARES, name it when that op's menu lacks the required
+ * tool — the router chose an op that hides the tool (an op attractor). An op the
+ * skill doesn't declare, or no op, falls back to the full tool filter, so it never
+ * trips. Independent of `routedOps`, so it names a new attractor on first sighting.
+ */
+export function menuGapTrips(
+  sc: Pick<Scenario, "expectedSkill" | "expectedToolNamePattern">,
+  dispatches: ReadonlyArray<{ skillName?: string; operation?: string }>,
+  operationsBySkill: Readonly<Record<string, Readonly<Record<string, readonly string[]>> | undefined>>,
+): string[] {
+  const pattern = sc.expectedToolNamePattern;
+  const menus = sc.expectedSkill ? operationsBySkill[sc.expectedSkill] : undefined;
+  if (!pattern || !menus) return [];
+  const trips = new Set<string>();
+  for (const d of dispatches) {
+    if (d.skillName !== sc.expectedSkill || !d.operation || !Object.hasOwn(menus, d.operation)) continue;
+    if (!menuHoldsTool(pattern, menus[d.operation]!)) {
+      trips.add(`router chose op "${d.operation}" for ${sc.expectedSkill}; "${d.operation}"'s menu lacks ${pattern}`);
+    }
+  }
+  return [...trips];
+}
+
 export const SCENARIOS: Scenario[] = [
   {
     id: "list-clients",
     prompt: "List my clients",
     expectedSkill: "rpi-admin",
     expectedToolNamePattern: /get_user_client_list/,
+    routedOps: ["identity"],
     textNonEmpty: true,
-    note: "SEMANTIC (ii) 2026-08-15: 'my / list my clients' = the tenants the CALLER can access → rpi-admin/get_user_client_list (user-scoped, works per-user). Flipped from rpi-clients per Mark's ruling — possessive 'my clients' must not 403 for a non-cluster-admin. The all-tenants/cluster-wide path is covered by list-all-clients below.",
+    note: "SEMANTIC (ii) 2026-08-15: 'my / list my clients' = the tenants the CALLER can access → rpi-admin/get_user_client_list (user-scoped, works per-user). Flipped from rpi-clients per a product ruling — possessive 'my clients' must not 403 for a non-cluster-admin. The all-tenants/cluster-wide path is covered by list-all-clients below.",
   },
   {
     id: "list-all-clients",
@@ -76,16 +137,18 @@ export const SCENARIOS: Scenario[] = [
     prompt: "List my audience snapshots",
     expectedSkill: "rpi-audiences",
     expectedToolNamePattern: /list_audience_snapshots/,
+    routedOps: ["snapshots"],
     textNonEmpty: true,
-    note: "Positive new-capability test (#27634, skill #10 — rpi-audiences +5 EXTEND) — proves the +5 snapshot/cell-list tools landed and the router REACHES rpi-audiences for a snapshot list (new snapshots op, list_audience_snapshots is a reliable list hit). A snapshot (frozen membership) is a THIRD concept distinct from the live file (list-audiences-no-count) and the definition (routing-audience-definitions), both of which remain the regression guard that menu-bloat didn't degrade existing routing.",
+    note: "Positive new-capability test (adopted skill #10 — rpi-audiences +5 EXTEND) — proves the +5 snapshot/cell-list tools landed and the router REACHES rpi-audiences for a snapshot list (new snapshots op, list_audience_snapshots is a reliable list hit). A snapshot (frozen membership) is a THIRD concept distinct from the live file (list-audiences-no-count) and the definition (routing-audience-definitions), both of which remain the regression guard that menu-bloat didn't degrade existing routing.",
   },
   {
     id: "audiences-get-cell-list",
     prompt: "Get the cell list with id 66666666-6666-6666-6666-666666666666",
     expectedSkill: "rpi-audiences",
     expectedToolNamePattern: /get_cell_list/,
+    routedOps: ["cell-list"],
     textNonEmpty: true,
-    note: "Deep new-capability test (#27634, skill #10) — a DISTINCT new sub-group (cell-list). Supplies an exact id so get_cell_list is the only correct target; covers the second orphan tool folded into rpi-audiences by the extend.",
+    note: "Deep new-capability test (adopted skill #10) — a DISTINCT new sub-group (cell-list). Supplies an exact id so get_cell_list is the only correct target; covers the second orphan tool folded into rpi-audiences by the extend.",
   },
   {
     id: "audiences-with-counts-gt-0",
@@ -106,8 +169,9 @@ export const SCENARIOS: Scenario[] = [
     prompt: "List my attribute lists",
     expectedSkill: "rpi-attributes",
     expectedToolNamePattern: /list_attribute_lists/,
+    routedOps: ["attribute-lists"],
     textNonEmpty: true,
-    note: "Positive adoption test (#27634) — proves the router can REACH rpi-attributes and hits list_attribute_lists, not just that it wasn't stolen. 'attribute lists' must land here, NOT rpi-selection-rules / rpi-audiences (which merely reference attribute lists).",
+    note: "Positive adoption test — proves the router can REACH rpi-attributes and hits list_attribute_lists, not just that it wasn't stolen. 'attribute lists' must land here, NOT rpi-selection-rules / rpi-audiences (which merely reference attribute lists).",
   },
   {
     id: "operations-execution-services",
@@ -115,23 +179,25 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-operations",
     expectedToolNamePattern: /list_execution_services/,
     textNonEmpty: true,
-    note: "Positive adoption test (#27634, skill #2) — proves the router REACHES rpi-operations and hits list_execution_services. Execution services are unique to rpi-operations (no confusable). Client-scoped ops here vs cluster-level diagnostics in rpi-admin.",
+    note: "Positive adoption test (adopted skill #2) — proves the router REACHES rpi-operations and hits list_execution_services. Execution services are unique to rpi-operations (no confusable). Client-scoped ops here vs cluster-level diagnostics in rpi-admin.",
   },
   {
     id: "databases-list-databases",
     prompt: "List my databases",
     expectedSkill: "rpi-databases",
     expectedToolNamePattern: /list_databases/,
+    routedOps: ["databases"],
     textNonEmpty: true,
-    note: "Positive adoption test (#27634, skill #3) — proves the router REACHES rpi-databases (the 22-tool watch-item) and the sub-agent picks list_databases (databases operation).",
+    note: "Positive adoption test (adopted skill #3) — proves the router REACHES rpi-databases (the 22-tool watch-item) and the sub-agent picks list_databases (databases operation).",
   },
   {
     id: "databases-table-joins",
     prompt: "Show me my table joins",
     expectedSkill: "rpi-databases",
     expectedToolNamePattern: /list_table_joins/,
+    routedOps: ["table-joins"],
     textNonEmpty: true,
-    note: "Intra-skill routing test (#27634, skill #3) — a DEEPER sub-group of the 22-tool rpi-databases. Proves operations narrowing works: 'table joins' reaches list_table_joins, not a database/sql-def tool. If this misroutes WITHIN the skill, that's the split signal.",
+    note: "Intra-skill routing test (adopted skill #3) — a DEEPER sub-group of the 22-tool rpi-databases. Proves operations narrowing works: 'table joins' reaches list_table_joins, not a database/sql-def tool. If this misroutes WITHIN the skill, that's the split signal.",
   },
   {
     id: "scv-list-views",
@@ -139,7 +205,7 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-single-customer-view",
     expectedToolNamePattern: /list_single_customer_views/,
     textNonEmpty: true,
-    note: "Positive adoption test (#27634, skill #4) — proves the router REACHES rpi-single-customer-view and hits list_single_customer_views.",
+    note: "Positive adoption test (adopted skill #4) — proves the router REACHES rpi-single-customer-view and hits list_single_customer_views.",
   },
   {
     id: "scv-attribute-group-by-name",
@@ -147,23 +213,25 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-single-customer-view",
     expectedToolNamePattern: /get_single_customer_view_attribute_group_by_name/,
     textNonEmpty: true,
-    note: "Intra-skill split test (#27634, skill #4), reframed — names BOTH the view (Customer360) and the specific group (Demographics), so get_single_customer_view_attribute_group_by_name is the ONLY correct target (the view-getter/list can't answer 'this named group'). Principle: a deep tool-hit prompt must supply the exact inputs only the target tool serves, else a broader tool is the correct pick and the pin is wrong.",
+    note: "Intra-skill split test (adopted skill #4), reframed — names BOTH the view (Customer360) and the specific group (Demographics), so get_single_customer_view_attribute_group_by_name is the ONLY correct target (the view-getter/list can't answer 'this named group'). Principle: a deep tool-hit prompt must supply the exact inputs only the target tool serves, else a broader tool is the correct pick and the pin is wrong.",
   },
   {
     id: "integrations-list-ftp",
     prompt: "List my FTP locations",
     expectedSkill: "rpi-integrations",
     expectedToolNamePattern: /list_ftp_locations/,
+    routedOps: ["ftp"],
     textNonEmpty: true,
-    note: "Positive adoption test (#27634, skill #5) — proves the router REACHES rpi-integrations (the 18-tool watch-item) and the sub-agent picks list_ftp_locations (ftp operation).",
+    note: "Positive adoption test (adopted skill #5) — proves the router REACHES rpi-integrations (the 18-tool watch-item) and the sub-agent picks list_ftp_locations (ftp operation).",
   },
   {
     id: "integrations-web-publish",
     prompt: "List my web publish site maps",
     expectedSkill: "rpi-integrations",
     expectedToolNamePattern: /list_web_publish_site_maps/,
+    routedOps: ["web-publish"],
     textNonEmpty: true,
-    note: "Intra-skill narrowing test (#27634, skill #5) — a DIFFERENT sub-group of the 18-tool rpi-integrations. Proves operations narrowing: 'web publish site maps' reaches list_web_publish_site_maps, not an ftp/channel/adapter tool. If this misroutes WITHIN the skill, that's the split signal.",
+    note: "Intra-skill narrowing test (adopted skill #5) — a DIFFERENT sub-group of the 18-tool rpi-integrations. Proves operations narrowing: 'web publish site maps' reaches list_web_publish_site_maps, not an ftp/channel/adapter tool. If this misroutes WITHIN the skill, that's the split signal.",
   },
   {
     id: "decision-rules-web-adaptors",
@@ -171,7 +239,7 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-decision-rules",
     expectedToolNamePattern: /list_web_decision_rule_adaptors/,
     textNonEmpty: true,
-    note: "Positive + boundary test (#27634, skill #6, DECISION side) — a 'decision rule' prompt must land on rpi-decision-rules (decisioning), NOT rpi-selection-rules (segmentation). Hits list_web_decision_rule_adaptors. The SELECTION side is pinned by list-selection-rules (→ rpi-selection-rules) — both sides of the decision-vs-selection boundary guarded.",
+    note: "Positive + boundary test (adopted skill #6, DECISION side) — a 'decision rule' prompt must land on rpi-decision-rules (decisioning), NOT rpi-selection-rules (segmentation). Hits list_web_decision_rule_adaptors. The SELECTION side is pinned by list-selection-rules (→ rpi-selection-rules) — both sides of the decision-vs-selection boundary guarded.",
   },
   {
     id: "decision-rules-orchestration-dynamic-content",
@@ -179,39 +247,43 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-decision-rules",
     expectedToolNamePattern: /list_orchestration_decision_rule_dynamic_content_files/,
     textNonEmpty: true,
-    note: "Deep intra-skill narrowing (#27634, skill #6) — a DISTINCT sub-group (orchestration) of rpi-decision-rules; prompt supplies the exact target (orchestration dynamic-content) so list_orchestration_decision_rule_dynamic_content_files is the only correct tool, not web-adaptors/criteria. No runtime id needed (it's a paged catalog).",
+    note: "Deep intra-skill narrowing (adopted skill #6) — a DISTINCT sub-group (orchestration) of rpi-decision-rules; prompt supplies the exact target (orchestration dynamic-content) so list_orchestration_decision_rule_dynamic_content_files is the only correct tool, not web-adaptors/criteria. No runtime id needed (it's a paged catalog).",
   },
   {
     id: "analysis-crosstab-colors",
     prompt: "List the predefined colors for cross-tab analysis panels",
     expectedSkill: "rpi-analysis",
     expectedToolNamePattern: /get_cross_tab_analysis_panel_predefined_colors/,
+    routedOps: ["panel-options"],
     textNonEmpty: true,
-    note: "Positive adoption test (#27634, skill #7) — proves the router REACHES rpi-analysis and hits get_cross_tab_analysis_panel_predefined_colors (a no-param catalog, so the tool-hit is reliable; panel-options sub-group).",
+    note: "Positive adoption test (adopted skill #7) — proves the router REACHES rpi-analysis and hits get_cross_tab_analysis_panel_predefined_colors (a no-param catalog, so the tool-hit is reliable; panel-options sub-group).",
   },
   {
     id: "analysis-get-dashboard",
     prompt: "Get the dashboard with id 11111111-1111-1111-1111-111111111111",
     expectedSkill: "rpi-analysis",
     expectedToolNamePattern: /get_dashboard/,
+    routedOps: ["dashboards"],
     textNonEmpty: true,
-    note: "Deep intra-skill narrowing (#27634, skill #7) — a DISTINCT sub-group (dashboards) of rpi-analysis. Prompt supplies the exact input the getter serves (a dashboard id), so get_dashboard is the only correct target, not a panel/report tool. Guards the internal spread (panels vs dashboards vs reports).",
+    note: "Deep intra-skill narrowing (adopted skill #7) — a DISTINCT sub-group (dashboards) of rpi-analysis. Prompt supplies the exact input the getter serves (a dashboard id), so get_dashboard is the only correct target, not a panel/report tool. Guards the internal spread (panels vs dashboards vs reports).",
   },
   {
     id: "content-list-image-assets",
     prompt: "List my digital image content-file assets",
     expectedSkill: "rpi-content",
     expectedToolNamePattern: /list_digital_image_content_file_assets/,
+    routedOps: ["digital-assets"],
     textNonEmpty: true,
-    note: "Positive adoption test (#27634, skill #8) — proves the router REACHES rpi-content and hits list_digital_image_content_file_assets (a paged list, so the tool-hit is reliable; digital-assets sub-group).",
+    note: "Positive adoption test (adopted skill #8) — proves the router REACHES rpi-content and hits list_digital_image_content_file_assets (a paged list, so the tool-hit is reliable; digital-assets sub-group).",
   },
   {
     id: "content-googleads-offer",
     prompt: "Get the Google Ads Customer Match offer with id 22222222-2222-2222-2222-222222222222",
     expectedSkill: "rpi-content",
     expectedToolNamePattern: /get_googleads_customer_match_offer/,
+    routedOps: ["offers"],
     textNonEmpty: true,
-    note: "Deep intra-skill + offer-disambiguation test (#27634, skill #8) — a DISTINCT sub-group (offers). Prompt names the Google Ads Customer Match offer type + supplies an id, so get_googleads_customer_match_offer is the only correct target, NOT the standard get_offer. Guards the get_offer-vs-googleads split cuz flagged.",
+    note: "Deep intra-skill + offer-disambiguation test (adopted skill #8) — a DISTINCT sub-group (offers). Prompt names the Google Ads Customer Match offer type + supplies an id, so get_googleads_customer_match_offer is the only correct target, NOT the standard get_offer. Guards the flagged get_offer-vs-googleads split.",
   },
   {
     id: "workflows-activity-results",
@@ -219,8 +291,9 @@ export const SCENARIOS: Scenario[] = [
       "Get the activity results for workflow run instance 33333333-3333-3333-3333-333333333333, activity 44444444-4444-4444-4444-444444444444",
     expectedSkill: "rpi-workflows",
     expectedToolNamePattern: /get_workflow_activity_results/,
+    routedOps: ["activity"],
     textNonEmpty: true,
-    note: "Positive adoption + workflows/interactions boundary (#27634, skill #9) — a specific RUN's per-activity telemetry, keyed by WorkflowAssociationInstanceID + ActivityID, is rpi-workflows (get_workflow_activity_results, activity sub-group). Pairs with routing-interaction-run-counts (interaction-centric run counts → rpi-interactions) to pin the workflows-vs-interactions boundary BOTH ways.",
+    note: "Positive adoption + workflows/interactions boundary (adopted skill #9) — a specific RUN's per-activity telemetry, keyed by WorkflowAssociationInstanceID + ActivityID, is rpi-workflows (get_workflow_activity_results, activity sub-group). Pairs with routing-interaction-run-counts (interaction-centric run counts → rpi-interactions) to pin the workflows-vs-interactions boundary BOTH ways.",
   },
   {
     id: "workflows-association-logs",
@@ -228,8 +301,29 @@ export const SCENARIOS: Scenario[] = [
       "Get the run log for workflow-association instance 55555555-5555-5555-5555-555555555555",
     expectedSkill: "rpi-workflows",
     expectedToolNamePattern: /get_workflow_association_instance_logs/,
+    routedOps: ["instance", "logs"],
     textNonEmpty: true,
-    note: "Deep intra-skill test (#27634, skill #9) — a DISTINCT sub-group (logs). Names a workflow-ASSOCIATION instance run + supplies its WorkflowAssociationInstanceID, so get_workflow_association_instance_logs is the target (the run-level log, same key as the rest of the skill). Post-flip fix: the sibling get_workflow_instance_logs (orphan generic-ID key, unreachable in this skill's flow) was DROPPED from the filter to make the logs op structurally deterministic — no confusable coin-flip.",
+    note: "Deep intra-skill test (adopted skill #9) — a DISTINCT sub-group (logs). Names a workflow-ASSOCIATION instance run + supplies its WorkflowAssociationInstanceID, so get_workflow_association_instance_logs is the target (the run-level log, same key as the rest of the skill). Post-flip fix: the sibling get_workflow_instance_logs (orphan generic-ID key, unreachable in this skill's flow) was DROPPED from the filter to make the logs op structurally deterministic — no confusable coin-flip.",
+  },
+  {
+    id: "workflows-instance-all-activity-results",
+    prompt:
+      "Get all the activity results for workflow run instance 66666666-6666-6666-6666-666666666666",
+    expectedSkill: "rpi-workflows",
+    expectedToolNamePattern: /get_workflow_all_activity_results/,
+    routedOps: ["activity", "instance"],
+    textNonEmpty: true,
+    note: "Guard for the activity/instance menus (adopted skill #9) — \"all the activity results\" of a run was routed with operation `activity` (the word), whose menu lacked get_workflow_all_activity_results: the sub-agent called the single-activity getter without an ActivityID and said the tool wasn't available. The all-results getter is in `activity` as well as `instance`.",
+  },
+  {
+    id: "workflows-instance-summaries",
+    prompt:
+      "List the instance summaries for workflow run instance 77777777-7777-7777-7777-777777777777",
+    expectedSkill: "rpi-workflows",
+    expectedToolNamePattern: /list_workflow_instance_summaries/,
+    routedOps: ["instance"],
+    textNonEmpty: true,
+    note: "Guard for the instance menu (adopted skill #9) — the run-log getter is also in the `instance` operation (so a run-log request routed as `instance` still reaches it); an instance SUMMARIES request must still pick list_workflow_instance_summaries, not the log tool.",
   },
   {
     id: "list-folders",
@@ -243,8 +337,9 @@ export const SCENARIOS: Scenario[] = [
       "List the contents of folder 77777777-7777-7777-7777-777777777777",
     expectedSkill: "rpi-folders",
     expectedToolNamePattern: /list_folder_content/,
+    routedOps: ["folder"],
     textNonEmpty: true,
-    note: "Positive new-capability + intra-skill guard (#27634, skill #11 — rpi-folders +11 EXTEND). 'contents of ONE folder' (by id) → list_folder_content (folder op), distinct from list_folders (the whole tree — the existing list-folders scenario is the regression guard that the extend didn't degrade tree-browse routing).",
+    note: "Positive new-capability + intra-skill guard (adopted skill #11 — rpi-folders +11 EXTEND). 'contents of ONE folder' (by id) → list_folder_content (folder op), distinct from list_folders (the whole tree — the existing list-folders scenario is the regression guard that the extend didn't degrade tree-browse routing).",
   },
   {
     id: "folders-file-metadata",
@@ -252,8 +347,9 @@ export const SCENARIOS: Scenario[] = [
       "Get the file-system metadata for file 88888888-8888-8888-8888-888888888888",
     expectedSkill: "rpi-folders",
     expectedToolNamePattern: /get_file_metadata/,
+    routedOps: ["file-info"],
     textNonEmpty: true,
-    note: "Deep new-capability test (#27634, skill #11) — a DISTINCT sub-group (file-info). Names the file-SYSTEM metadata + supplies an id, so get_file_metadata is the target (metadata ABOUT the file, not its content — content is the domain skill).",
+    note: "Deep new-capability test (adopted skill #11) — a DISTINCT sub-group (file-info). Names the file-SYSTEM metadata + supplies an id, so get_file_metadata is the target (metadata ABOUT the file, not its content — content is the domain skill).",
   },
   {
     id: "folders-file-dependents",
@@ -261,16 +357,18 @@ export const SCENARIOS: Scenario[] = [
       "Which files depend on file 99999999-9999-9999-9999-999999999999?",
     expectedSkill: "rpi-folders",
     expectedToolNamePattern: /get_file_dependents/,
+    routedOps: ["file-dependencies"],
     textNonEmpty: true,
-    note: "Deep new-capability + direction guard (#27634, skill #11) — file-dependencies op. 'what depends ON this file' = reverse/incoming → get_file_dependents, NOT get_file_dependencies (the opposite, forward direction). Pins the bidirectional pair.",
+    note: "Deep new-capability + direction guard (adopted skill #11) — file-dependencies op. 'what depends ON this file' = reverse/incoming → get_file_dependents, NOT get_file_dependencies (the opposite, forward direction). Pins the bidirectional pair.",
   },
   {
     id: "folders-file-info-attribute-lists",
     prompt: "List the file-info display-column attribute lists",
     expectedSkill: "rpi-folders",
     expectedToolNamePattern: /list_file_info_attribute_lists/,
+    routedOps: ["file-info"],
     textNonEmpty: true,
-    note: "Flagged cross-skill boundary (#27634, skill #11) — the FILE-INFO sense of 'attribute lists' → rpi-folders (list_file_info_attribute_lists), NOT the tenant-wide attribute lists which are rpi-attributes (list_attribute_lists, pinned by attributes-list-attribute-lists). cuz flagged the ×3-sense confusable; this pins the file-system sense. Prompt says 'file-info display-column' to disambiguate from the plain 'my attribute lists' that belongs to rpi-attributes.",
+    note: "Flagged cross-skill boundary (adopted skill #11) — the FILE-INFO sense of 'attribute lists' → rpi-folders (list_file_info_attribute_lists), NOT the tenant-wide attribute lists which are rpi-attributes (list_attribute_lists, pinned by attributes-list-attribute-lists). The ×3-sense confusable was flagged in review; this pins the file-system sense. Prompt says 'file-info display-column' to disambiguate from the plain 'my attribute lists' that belongs to rpi-attributes.",
   },
   {
     id: "list-interactions",
@@ -283,9 +381,10 @@ export const SCENARIOS: Scenario[] = [
     prompt: "Check my RPI connection",
     expectedSkill: "rpi-admin",
     expectedToolNamePattern: /verify_connection/,
-    forbiddenToolNamePattern: /get_cluster_|get_system_health_availability/,
+    routedOps: ["diagnostics"],
+    forbiddenToolNamePattern: /get_cluster_|get_system_health_availability|get_user_client_list/,
     textNonEmpty: true,
-    note: "INVARIANT (Mark, 2026-08-17): every SME (non-admin) MUST be able to check their connection cleanly. Uses Mark's exact failing phrasing. A connection check MUST call verify_connection (low-priv /info/version, per-user, never 403s) and MUST NOT touch any cluster-admin tool (get_cluster_* / get_system_health_availability). The earlier flakiness that made me drop the verify_connection positive assertion WAS the bug: the router passed operation='diagnostics', whose subset excluded verify_connection, so the sub-agent fell to get_cluster_api_error_log → 403 for non-admins. Fixed deterministically by making verify_connection a member of EVERY rpi-admin operation (structural, not phrase-match) + a description that makes it the unambiguous connectivity pick. This asserts BOTH halves; if a single run flips, the fix isn't deterministic.",
+    note: "INVARIANT (2026-08-17): every SME (non-admin) MUST be able to check their connection cleanly. Uses the exact failing phrasing. A connection check MUST call verify_connection (low-priv /info/version, per-user, never 403s) and MUST NOT touch any cluster-admin tool (get_cluster_* / get_system_health_availability). The earlier flakiness that made me drop the verify_connection positive assertion WAS the bug: the router passed operation='diagnostics', whose subset excluded verify_connection, so the sub-agent fell to get_cluster_api_error_log → 403 for non-admins. Fixed deterministically by making verify_connection a member of EVERY rpi-admin operation (structural, not phrase-match) + a description that makes it the unambiguous connectivity pick. This asserts BOTH halves; if a single run flips, the fix isn't deterministic. Guard for the diagnostics menu: the caller's client list is also in `diagnostics` (so 'which clients can I access?' routed as `diagnostics` still reaches it); this prompt must not pick it.",
   },
   // v1.1.2 routing scenario (v1.1.2.1 scrub: 3 sibling scenarios dropped
   // because they targeted tools requiring entity-specific IDs the generic
@@ -295,8 +394,9 @@ export const SCENARIOS: Scenario[] = [
     id: "routing-admin-diagnostics",
     prompt: "Are there any errors in my RPI cluster?",
     expectedSkill: "rpi-admin",
+    forbiddenToolNamePattern: /get_user_client_list/,
     textNonEmpty: true,
-    note: "Domain recognition — get_cluster_api_error_log lives ONLY in rpi-admin; no required params, agent CAN dispatch directly",
+    note: "Domain recognition — get_cluster_api_error_log lives ONLY in rpi-admin; no required params, agent CAN dispatch directly. Guard for the diagnostics menu: the caller's client list is also in `diagnostics` (so 'which clients can I access?' routed as `diagnostics` still reaches it); this prompt must not pick it.",
   },
   // v1.1.4 — 4 Tier-A scenarios (ID-free, read-only, workspace-portable).
   // Picked from a 45-tool audit: highest signal per scenario at lowest
@@ -311,20 +411,31 @@ export const SCENARIOS: Scenario[] = [
     note: "SYSTEM HEALTH → rpi-health (the 2026-08-16 split). Health tools moved OUT of rpi-admin into their own skill so a connection check (rpi-admin) structurally cannot call the health tool — makes check-connection's forbidden-tool assertion deterministic. Distinct from verify_connection (rpi-admin auth) / get_cluster_api_error_log (rpi-admin diagnostics).",
   },
   {
+    id: "health-monitoring-overview",
+    prompt: "Show me the system health monitoring overview",
+    expectedSkill: "rpi-health",
+    expectedToolNamePattern: /get_system_health_monitoring_overview/,
+    forbiddenToolNamePattern: /get_system_health_availability/,
+    textNonEmpty: true,
+    note: "Guard for the monitoring overview — rpi-health declares no operations, so both health tools are always on hand; an explicit monitoring-overview request must still pick get_system_health_monitoring_overview, and only it.",
+  },
+  {
     id: "routing-audit-history",
     prompt: "Show me my RPI audit history",
     expectedSkill: "rpi-operations",
     expectedToolNamePattern: /get_operation_audit_history/,
     textNonEmpty: true,
-    note: "Scope split (#27634 adoption): 'MY audit history' = CLIENT-scoped → rpi-operations (get_operation_audit_history). Superseded the old rpi-admin pin (that was a flagged 'pure inference' before a client-scoped audit skill existed). Pairs with routing-cluster-audit below.",
+    note: "Scope split (adoption): 'MY audit history' = CLIENT-scoped → rpi-operations (get_operation_audit_history). Superseded the old rpi-admin pin (that was a flagged 'pure inference' before a client-scoped audit skill existed). Pairs with routing-cluster-audit below.",
   },
   {
     id: "routing-cluster-audit",
     prompt: "Show me the cluster-wide audit history",
     expectedSkill: "rpi-admin",
     expectedToolNamePattern: /get_cluster_audit_history/,
+    routedOps: ["diagnostics"],
+    forbiddenToolNamePattern: /get_user_client_list/,
     textNonEmpty: true,
-    note: "Scope split (#27634 adoption): CLUSTER/system-wide audit → rpi-admin (get_cluster_audit_history). Pins the cluster half so the client-vs-cluster audit boundary is tested both ways, not just moved.",
+    note: "Scope split (adoption): CLUSTER/system-wide audit → rpi-admin (get_cluster_audit_history). Pins the cluster half so the client-vs-cluster audit boundary is tested both ways, not just moved. Guard for the diagnostics menu: the caller's client list is also in `diagnostics` (so 'which clients can I access?' routed as `diagnostics` still reaches it); this prompt must not pick it.",
   },
   {
     id: "routing-audience-definitions",
@@ -346,8 +457,9 @@ export const SCENARIOS: Scenario[] = [
       "What entire-rule types are available for building a standard selection rule?",
     expectedSkill: "rpi-selection-rules",
     expectedToolNamePattern: /list_standard_selection_rule_entire_rule_types/,
+    routedOps: ["definitions"],
     textNonEmpty: true,
-    note: "Positive new-capability test (#27634, skill #12 — rpi-selection-rules +1 EXTEND). The Standard 'entire rule' type catalog → list_standard_selection_rule_entire_rule_types (definitions op), a no-id catalog so the hit is reliable. Distinct from list_basic_selection_rule_document_definitions (the Basic analog, pinned by routing-selection-rule-definitions) — both live in rpi-selection-rules.",
+    note: "Positive new-capability test (adopted skill #12 — rpi-selection-rules +1 EXTEND). The Standard 'entire rule' type catalog → list_standard_selection_rule_entire_rule_types (definitions op), a no-id catalog so the hit is reliable. Distinct from list_basic_selection_rule_document_definitions (the Basic analog, pinned by routing-selection-rule-definitions) — both live in rpi-selection-rules.",
   },
   {
     id: "userperm-list-users",
@@ -355,7 +467,7 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-users-permissions",
     expectedToolNamePattern: /list_users/,
     textNonEmpty: true,
-    note: "Positive + client-vs-caller scope guard (#27634, skill #13 — rpi-users-permissions, three-user finale). The CLIENT tenant's user directory → rpi-users-permissions (list_users), NOT the caller's own identity (rpi-admin get_user_profile). Full 3-way caller/client/cluster scope pins land with the rpi-admin commit (#15); this is the client-side sanity.",
+    note: "Positive + client-vs-caller scope guard (adopted skill #13 — rpi-users-permissions, three-user finale). The CLIENT tenant's user directory → rpi-users-permissions (list_users), NOT the caller's own identity (rpi-admin get_user_profile). Full 3-way caller/client/cluster scope pins land with the rpi-admin commit (#15); this is the client-side sanity.",
   },
   {
     id: "userperm-user-permissions",
@@ -363,7 +475,7 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-users-permissions",
     expectedToolNamePattern: /get_user_permissions/,
     textNonEmpty: true,
-    note: "Deep intra-skill test (#27634, skill #13) — permissions op. Names a specific user → get_user_permissions (what one user actually has), distinct from list_available_permissions (the assignable catalog).",
+    note: "Deep intra-skill test (adopted skill #13). Names a specific user → get_user_permissions (what one user actually has), distinct from list_available_permissions (the assignable catalog).",
   },
   {
     id: "cluster-list-users",
@@ -371,7 +483,7 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-cluster-users",
     expectedToolNamePattern: /list_cluster_users/,
     textNonEmpty: true,
-    note: "Positive + cluster-vs-client scope guard (#27634 — rpi-cluster-users, the B1 split). CLUSTER users spanning clients → rpi-cluster-users (list_cluster_users), NOT one client's directory (rpi-users-permissions) and NOT the caller (rpi-admin). The cluster leg of the three-user scope triangle now points at rpi-cluster-users.",
+    note: "Positive + cluster-vs-client scope guard (rpi-cluster-users, the B1 split). CLUSTER users spanning clients → rpi-cluster-users (list_cluster_users), NOT one client's directory (rpi-users-permissions) and NOT the caller (rpi-admin). The cluster leg of the three-user scope triangle now points at rpi-cluster-users.",
   },
   {
     id: "cluster-external-users",
@@ -379,7 +491,7 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-cluster-users",
     expectedToolNamePattern: /list_cluster_external_users/,
     textNonEmpty: true,
-    note: "Deep intra-skill test (#27634 — rpi-cluster-users, B1 split) — external-users op. Federated/SSO cluster identities → list_cluster_external_users, distinct from the internal list_cluster_users. Both in the small 8-tool users skill.",
+    note: "Deep intra-skill test (rpi-cluster-users, B1 split). Federated/SSO cluster identities → list_cluster_external_users, distinct from the internal list_cluster_users. Both in the small 8-tool users skill.",
   },
   {
     id: "cluster-list-plugins",
@@ -387,7 +499,7 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-cluster-infra",
     expectedToolNamePattern: /list_cluster_plugins/,
     textNonEmpty: true,
-    note: "The B1 FIX target (#27634) — this scenario flipped on the 13-tool rpi-cluster (sub-agent grabbed get_cluster_error_log for a plugins prompt when the router omitted the op). Fixed by the 2-way split PLUS dropping the two cluster-log magnet tools from the routed filter — rpi-cluster-infra is now a 3-noun magnet-free menu (system-tasks/aux-databases/plugins), so plugins hits list_cluster_plugins deterministically.",
+    note: "The B1 FIX target — this scenario flipped on the 13-tool rpi-cluster (sub-agent grabbed get_cluster_error_log for a plugins prompt when the router omitted the op). Fixed by the 2-way split PLUS dropping the two cluster-log magnet tools from the routed filter — rpi-cluster-infra is now a 3-noun magnet-free menu (system-tasks/aux-databases/plugins), so plugins hits list_cluster_plugins deterministically.",
   },
   {
     id: "cluster-system-tasks",
@@ -395,23 +507,35 @@ export const SCENARIOS: Scenario[] = [
     expectedSkill: "rpi-cluster-infra",
     expectedToolNamePattern: /get_cluster_system_tasks/,
     textNonEmpty: true,
-    note: "Magnet-removal regression guard (#27634 — rpi-cluster-infra, B1 + disable-magnet). Cluster-wide system tasks → get_cluster_system_tasks. This flipped to get_cluster_error_log while the two cluster-log tools shared the menu; both were DROPPED from the routed filter (retail/direct only, like the #9 orphan-log drop), leaving a 3-noun magnet-free menu (system-tasks/aux-databases/plugins). Determinism > size — a magnet in the menu beats size, so the magnet was removed, not a third skill.",
+    note: "Magnet-removal regression guard (rpi-cluster-infra, B1 + disable-magnet). Cluster-wide system tasks → get_cluster_system_tasks. This flipped to get_cluster_error_log while the two cluster-log tools shared the menu; both were DROPPED from the routed filter (retail/direct only, like the #9 orphan-log drop), leaving a 3-noun magnet-free menu (system-tasks/aux-databases/plugins). Determinism > size — a magnet in the menu beats size, so the magnet was removed, not a third skill.",
   },
   {
     id: "admin-my-profile",
     prompt: "Show me my own user profile",
     expectedSkill: "rpi-admin",
     expectedToolNamePattern: /get_user_profile/,
+    routedOps: ["identity"],
     textNonEmpty: true,
-    note: "THREE-WAY SCOPE PIN — CALLER leg (#27634, skill #15 — rpi-admin, three-user finale). 'MY own profile' = the authenticated caller → rpi-admin (get_user_profile). Completes the triangle with userperm-list-users (client → rpi-users-permissions) and cluster-list-users (cluster → rpi-cluster) — each of the three 'user' surfaces routes to its own skill, none bleeding to the other two.",
+    note: "THREE-WAY SCOPE PIN — CALLER leg (adopted skill #15 — rpi-admin, three-user finale). 'MY own profile' = the authenticated caller → rpi-admin (get_user_profile). Completes the triangle with userperm-list-users (client → rpi-users-permissions) and cluster-list-users (cluster → rpi-cluster) — each of the three 'user' surfaces routes to its own skill, none bleeding to the other two.",
   },
   {
     id: "admin-my-clients",
     prompt: "Which clients can I access?",
     expectedSkill: "rpi-admin",
     expectedToolNamePattern: /get_user_client_list/,
+    routedOps: ["auth", "identity"],
     textNonEmpty: true,
-    note: "New-capability + boundary vs rpi-clients (#27634, skill #15) — 'clients *I* can access' = the caller's reachable tenants → rpi-admin (get_user_client_list, identity op), distinct from rpi-clients (the full tenant list). Guards 'my clients' from bleeding to the tenant-listing skill.",
+    note: "New-capability + boundary vs rpi-clients (adopted skill #15) — 'clients *I* can access' = the caller's reachable tenants → rpi-admin (get_user_client_list, identity op), distinct from rpi-clients (the full tenant list). Guards 'my clients' from bleeding to the tenant-listing skill.",
+  },
+  {
+    id: "admin-token-status",
+    prompt: "Is my RPI access token still valid?",
+    expectedSkill: "rpi-admin",
+    expectedToolNamePattern: /validate_token_status/,
+    routedOps: ["auth"],
+    forbiddenToolNamePattern: /get_user_client_list/,
+    textNonEmpty: true,
+    note: "Guard for the auth menu — the caller's client list is also in the `auth` operation (so 'which clients can I access?' routed as `auth` still reaches it); a token-validity check must still pick validate_token_status, not the client list.",
   },
   {
     id: "routing-interaction-run-counts",
@@ -430,12 +554,12 @@ export const SCENARIOS: Scenario[] = [
   {
     id: "runs-dashboard-pill",
     prompt: "Run daily interaction dashboard for last month...",
-    // Phase 2 (#27957): dashboards route to the DETERMINISTIC render_view_dashboard
+    // Phase 2: dashboards route to the DETERMINISTIC render_view_dashboard
     // orchestrator tool, NOT a skill — so no execute_skill is expected.
     expectedSkill: null,
     expectedOrchestratorToolPattern: /render_view_dashboard/,
     expectedViewId: "interaction-run-counts",
-    note: "Guards the routing of the LIVE SuggestionBar pill (seed.ts) 'Run daily interaction dashboard for last month...'. Phase 2 (#27957) replaced the old LLM-composed path (rpi-interactions → summarize_interaction_runs, granularity:'daily') with the deterministic render_view_dashboard tool. This pins the routing DECISION: the model must call render_view_dashboard with viewId 'interaction-run-counts' (the runs-over-time view) for a runs-dashboard prompt. Composition/params are deterministic code (not eval-gated); this guards only the tool + viewId choice — the coverage the skill-routing check can't see.",
+    note: "Guards the routing of the LIVE SuggestionBar pill (seed.ts) 'Run daily interaction dashboard for last month...'. Phase 2 replaced the old LLM-composed path (rpi-interactions → summarize_interaction_runs, granularity:'daily') with the deterministic render_view_dashboard tool. This pins the routing DECISION: the model must call render_view_dashboard with viewId 'interaction-run-counts' (the runs-over-time view) for a runs-dashboard prompt. Composition/params are deterministic code (not eval-gated); this guards only the tool + viewId choice — the coverage the skill-routing check can't see.",
   },
   // Knowledge-intent scenarios — deep how-to / design / strategy questions must
   // dispatch to the dispatched knowledge expert (rpi-domain-expert), NOT be
@@ -530,6 +654,12 @@ export interface ChainScenario {
   cacheKey: "clients" | "audiences" | "interactions" | "selectionRules";
   /** Matches the sub-agent tool name (e.g., `rpi__get_audience_by_(name|id)`). */
   expectedToolNamePattern: RegExp;
+  /**
+   * The chain is judged on its route and its tool call (the expected tool, called with
+   * the name) whatever the call returns: the reply need not repeat the name. Only for
+   * a read the eval's login is refused by design (a 403 is the right answer for it).
+   */
+  outcomeAgnostic?: true;
   note?: string;
 }
 
@@ -540,6 +670,8 @@ export const CHAIN_SCENARIOS: ChainScenario[] = [
     expectedSkill: "rpi-clients",
     cacheKey: "clients",
     expectedToolNamePattern: /^rpi__get_client_by_(name|id)$/,
+    outcomeAgnostic: true,
+    note: "Reading a client by name is a cluster-admin read: for a non-admin login it is refused with 403, the right per-user answer. So the chain is judged on the route (rpi-clients) and the call (get_client_by_name/id with the name), not on the reply repeating the name — that is data correctness, the MCP server's own tests' job.",
   },
   {
     id: "chain-audience-by-name",
@@ -554,6 +686,14 @@ export const CHAIN_SCENARIOS: ChainScenario[] = [
     expectedSkill: "rpi-interactions",
     cacheKey: "interactions",
     expectedToolNamePattern: /^rpi__get_interaction_by_(name|id)$/,
+  },
+  {
+    id: "chain-interaction-last-run-counts",
+    promptTemplate: (n) => `What were the result counts from the last run of my interaction named ${n}?`,
+    expectedSkill: "rpi-interactions",
+    cacheKey: "interactions",
+    expectedToolNamePattern: /^rpi__get_interaction_by_name$/,
+    note: "Guard for the runs menu — a last-run request is routed as `runs`, and the counts come from the interaction's workflow instances, so the name lookup (get_interaction_by_name) and get_interaction_workflow_instances are in `runs` as well as `get`/`workflow`. Judged on the route and the name lookup with the cached name.",
   },
   {
     id: "chain-selection-rule-by-name",
@@ -635,6 +775,7 @@ export const DRH_SCENARIOS: Scenario[] = [
     // Data Readiness Hub MCP connection — proves we hit the live server, not just that the
     // skill was picked. Namespaced drh__ (conn name) + the real drh_list_sources.
     expectedToolNamePattern: /^drh__drh_list_sources$/,
+    routedOps: ["list"],
     note: "HOW — operation intent → drh-datasources action skill, which resolves a database then MUST call the real drh__drh_list_sources tool (tool-hit asserted, not inferred).",
   },
   {
@@ -643,6 +784,7 @@ export const DRH_SCENARIOS: Scenario[] = [
     expectedSkill: "drh-feeds",
     textNonEmpty: true,
     expectedToolNamePattern: /^drh__drh_list_feeds$/,
+    routedOps: ["list"],
     note: "HOW — feed listing → drh-feeds → real drh__drh_list_feeds tool-hit.",
   },
   {
@@ -651,6 +793,7 @@ export const DRH_SCENARIOS: Scenario[] = [
     expectedSkill: "drh-runs",
     textNonEmpty: true,
     expectedToolNamePattern: /^drh__drh_list_database_match_runs$/,
+    routedOps: ["list"],
     note: "HOW — run reporting → drh-runs → real (database-scoped) drh__drh_list_database_match_runs tool-hit.",
   },
   {
@@ -659,7 +802,32 @@ export const DRH_SCENARIOS: Scenario[] = [
     expectedSkill: "drh-data-quality",
     textNonEmpty: true,
     expectedToolNamePattern: /^drh__drh_get_hygiene_scores$/,
-    note: "HOW — data-quality metric → drh-data-quality → real drh__drh_get_hygiene_scores tool-hit.",
+    routedOps: ["quality"],
+    expectedToolArgs: wideLookBack,
+    textNotMatches: NO_DATA_CLAIMS,
+    note: "HOW — data-quality metric → drh-data-quality → real drh__drh_get_hygiene_scores tool-hit, with a look-back window wide enough to return the history (count is days, not records).",
+  },
+  {
+    id: "drh-op-hygiene-history",
+    prompt: "Show me the hygiene score history for my DRH feeds",
+    expectedSkill: "drh-data-quality",
+    textNonEmpty: true,
+    expectedToolNamePattern: /^drh__drh_get_hygiene_scores$/,
+    routedOps: ["quality"],
+    expectedToolArgs: wideLookBack,
+    textNotMatches: NO_DATA_CLAIMS,
+    note: "The history a rep asks for: count is a look-back window in days; a small or missing count answered a false 'no hygiene history'.",
+  },
+  {
+    id: "drh-op-match-confidence",
+    prompt: "Show me the match confidence breakdown",
+    expectedSkill: "drh-data-quality",
+    textNonEmpty: true,
+    expectedToolNamePattern: /^drh__drh_get_match_confidence$/,
+    routedOps: ["quality"],
+    expectedToolArgs: wideLookBack,
+    textNotMatches: NO_DATA_CLAIMS,
+    note: "Match confidence is a DRH data-quality metric (identity matching's confidence bands) → drh-data-quality, not an RPI skill. Without a wide count the tool returns an empty list.",
   },
   {
     id: "drh-op-list-schedules",
@@ -667,6 +835,7 @@ export const DRH_SCENARIOS: Scenario[] = [
     expectedSkill: "drh-schedules",
     textNonEmpty: true,
     expectedToolNamePattern: /^drh__drh_list_schedules$/,
+    routedOps: ["list"],
     note: "HOW — schedule listing → drh-schedules → real drh__drh_list_schedules tool-hit.",
   },
 ];

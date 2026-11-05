@@ -87,7 +87,7 @@ export function registerRunTools(server: McpServer, client: DRHApiClient) {
       description:
         "Search feed runs. POST /feed-runs/search. Body: { searchParams, sortParams, pageSelector: { pageSize, pageNumber, useCache } }.",
       inputSchema: {
-        body: z.record(z.unknown()).describe("Search request ({searchParams, sortParams, pageSelector})."),
+        body: z.record(z.string(), z.unknown()).describe("Search request ({searchParams, sortParams, pageSelector})."),
         clientId: drhClientIdSchema,
       },
       annotations: READ_ONLY,
@@ -106,7 +106,7 @@ export function registerRunTools(server: McpServer, client: DRHApiClient) {
     {
       title: "Create Feed Run",
       description: "Start a feed run. POST /feed-runs.",
-      inputSchema: { body: z.record(z.unknown()).describe("Feed-run request payload."), clientId: drhClientIdSchema },
+      inputSchema: { body: z.record(z.string(), z.unknown()).describe("Feed-run request payload."), clientId: drhClientIdSchema },
       annotations: MUTATING,
     },
     async ({ body, clientId }, extra) => {
@@ -125,7 +125,7 @@ export function registerRunTools(server: McpServer, client: DRHApiClient) {
       description: "Update a feed run. PATCH /feed-runs/{id}.",
       inputSchema: {
         feedRunId: numericIdSchema("Feed run id"),
-        body: z.record(z.unknown()).describe("Feed-run patch payload."),
+        body: z.record(z.string(), z.unknown()).describe("Feed-run patch payload."),
         clientId: drhClientIdSchema,
       },
       annotations: MUTATING,
@@ -145,7 +145,7 @@ export function registerRunTools(server: McpServer, client: DRHApiClient) {
     {
       title: "Create Match Run",
       description: "Start a match run. POST /match-runs.",
-      inputSchema: { body: z.record(z.unknown()).describe("Match-run request payload."), clientId: drhClientIdSchema },
+      inputSchema: { body: z.record(z.string(), z.unknown()).describe("Match-run request payload."), clientId: drhClientIdSchema },
       annotations: MUTATING,
     },
     async ({ body, clientId }, extra) => {
@@ -219,7 +219,7 @@ export function registerRunTools(server: McpServer, client: DRHApiClient) {
     {
       title: "Create RPI Sync Run",
       description: "Start an RPI sync run. POST /rpi-sync-runs.",
-      inputSchema: { body: z.record(z.unknown()).describe("RPI-sync-run request payload."), clientId: drhClientIdSchema },
+      inputSchema: { body: z.record(z.string(), z.unknown()).describe("RPI-sync-run request payload."), clientId: drhClientIdSchema },
       annotations: MUTATING,
     },
     async ({ body, clientId }, extra) => {

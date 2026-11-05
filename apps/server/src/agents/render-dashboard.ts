@@ -1,5 +1,5 @@
 /**
- * #27957 (Phase 2) — the render_view_dashboard orchestrator tool (single dispatcher).
+ * Phase 2 — the render_view_dashboard orchestrator tool (single dispatcher).
  *
  * The DETERMINISTIC replacement for the old LLM-composed render_dashboard. The LLM
  * no longer authors a DashboardSpec — it picks a `viewId` and extracts a small
@@ -25,7 +25,9 @@ const DESCRIPTION =
   "and pass its `params`; the server fetches the data and assembles the view. " +
   "Available views:\n" +
   buildViewCatalog() +
-  "\nThe dashboard renders inline in the chat; do not repeat its figures in text.";
+  "\nThe dashboard renders inline in the chat; do not repeat its figures in text. " +
+  "NOT for an EXISTING saved RPI dashboard or widget asked for by its id or name — " +
+  "that is a read: execute_skill rpi-analysis, operation dashboards.";
 
 const inputSchema = {
   type: "object",

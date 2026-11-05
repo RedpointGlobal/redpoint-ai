@@ -2,7 +2,7 @@
 
 A self-contained executable that exposes the Redpoint Interaction (RPI) Integration API as Model Context Protocol tools. The fast path for **agent developers** who already have an MCP client — Claude Desktop, Cursor, langchain, an in-house agent, anything that speaks MCP — and just need a working RPI tool surface to point it at.
 
-Source lives in `packages/mcp-rpi`. 47 tools across 8 domains; ships as a per-platform binary + click-to-run launcher.
+Source lives in `packages/mcp-rpi`. It lists 197 tools (`tools/list`; the count is pinned in `packages/mcp-rpi/src/tool-surface.ts`): 44 of its 49 hand-written tools across 8 domains (5 writes are gated) plus 153 read tools generated from the RPI OpenAPI spec. Ships as a per-platform binary + click-to-run launcher.
 
 ## Tool Domains
 
@@ -315,7 +315,7 @@ Every RPI-backed tool exposes an optional `clientId` input in its `inputSchema`.
 
 ## Tool Filtering
 
-The server supports narrowing the response to `tools/list` via two optional params. Useful for external MCP clients (Claude Desktop, Cursor, direct SDK) and for RedpointAI workspaces that don't use skills — without filtering, a client gets all 47 tools on every request.
+The server supports narrowing the response to `tools/list` via two optional params. Useful for external MCP clients (Claude Desktop, Cursor, direct SDK) and for RedpointAI workspaces that don't use skills — without filtering, a client gets all 197 tools on every request.
 
 ### Wire format
 
