@@ -1,5 +1,5 @@
 /**
- * #27897 task 5 — export an agent chart as SVG or PNG.
+ * Export an agent chart as SVG or PNG.
  *
  * THE GOTCHA (task 3 theming): series colours are `var(--dataviz-N)` and the
  * chart chrome reads `var(--muted-foreground)` / `var(--border)` / etc. Those

@@ -4,6 +4,23 @@ Base URL: `http://localhost:3000/api/v1`
 
 All endpoints return JSON unless otherwise noted. When `AUTH_REQUIRED=true`, requests must include either a Bearer token (OIDC JWT) or an API key in the `Authorization` header.
 
+## Limits
+
+Every `/api/v1` call is bounded. Over a limit the answer is `429` with `Retry-After` (seconds); the limits are constants of the product, not configuration.
+
+| Bound | Limit | Applies |
+|---|---|---|
+| Requests per peer address | 1200 / minute | always (a flood ceiling, before auth) |
+| RPI token validations (new tokens) | 600 / minute, server-wide | always; a cached token costs nothing, so signed-in users keep working while new tokens are refused |
+| Failed validations of one token | 10 / minute | always |
+| Requests per user | 120 / minute | auth on |
+| Chat turns per user (`/chat`, the AG-UI stream, an A2A message) | 20 / minute | auth on |
+| Open trace streams per user | 5 | auth on |
+| API keys minted per user | 10 / hour | auth on |
+| Request body | 4 MiB (`413` over it) | always |
+
+With `AUTH_REQUIRED=false` (the local dev run, one operator) the per-user limits do not apply.
+
 ## Health
 
 ### `GET /health`
@@ -28,6 +45,8 @@ List all workspaces.
 Get a workspace by ID. Returns 404 if not found.
 
 ### `POST /api/v1/workspaces`
+
+**Dev mode only** (`AUTH_REQUIRED=false`): with auth on, `POST`, `PUT` and `DELETE` on workspaces answer `403` for every caller. The workspaces are shared by every user and their configuration decides where each user's token goes, so no user may change it; the seeded workspaces come from code.
 
 Create a workspace. Body validated against `WorkspaceCreateSchema`:
 
@@ -55,11 +74,11 @@ Delete a workspace. Returns `{ "deleted": true }`.
 
 ## Threads
 
-Threads are scoped to a workspace: `/api/v1/workspaces/:workspaceId/threads`.
+Threads are scoped to a workspace: `/api/v1/workspaces/:workspaceId/threads`, and each belongs to the identity that created it (an API key acts as its owner). Every thread route — and the runs and the AG-UI stream on it — answers `404` for a thread the caller doesn't own, one under another workspace's id, or one created before 7.179 (no owner; dev mode sees all).
 
 ### `GET .../threads`
 
-List threads for a workspace, ordered by most recently updated.
+List the caller's threads in a workspace, ordered by most recently updated.
 
 ### `POST .../threads`
 
@@ -121,6 +140,12 @@ Raw AG-UI event stream for third-party agent clients. Emits granular events:
 
 Response: `text/event-stream` (SSE).
 
+## Trace
+
+### `GET /api/v1/workspaces/:id/trace` · `GET /api/v1/workspaces/:id/trace/stream`
+
+The caller's own telemetry events in the workspace (each tool call's arguments and result) — never another user's: the buffer is kept per workspace and user. `?clear=1` clears the caller's own events. `/trace/stream` (SSE) replays them, then follows the caller's new ones.
+
 ## Providers
 
 ### `GET /api/v1/providers`
@@ -144,20 +169,19 @@ Create an API key:
 {
   "name": "My Key",
   "workspaceId": "uuid",
-  "permissions": ["read", "write"],
   "expiresInDays": 90
 }
 ```
 
-Returns 201 with the raw key (shown only once).
+Returns 201 with the raw key (shown only once). The key belongs to the caller and acts **as** them: it reaches their own threads and trace, and, when `workspaceId` is set, only that workspace (any other answers `404`). Only a non-key caller may create one (`403` for an API key). Every key expires: `expiresInDays` defaults to 90, 365 at most. (The former `permissions` field was never enforced and is now refused.)
 
 ### `GET /api/v1/auth/api-keys`
 
-List API keys (without raw values).
+List the caller's own API keys (without raw values).
 
 ### `DELETE /api/v1/auth/api-keys/:keyId`
 
-Revoke an API key.
+Revoke one of the caller's own API keys (another's: `404`).
 
 ## Metrics
 

@@ -404,6 +404,8 @@ export type ChainCacheKey =
 export interface ChainCacheEntry {
   /** First record's display name, or null if the workspace has no records of this type. */
   name: string | null;
+  /** Why this key's record couldn't be fetched (its chain scenario fails with it; the others still run). */
+  error?: string;
 }
 
 const _chainCache: Partial<Record<ChainCacheKey, ChainCacheEntry>> = {};
@@ -431,6 +433,7 @@ const _chainCache: Partial<Record<ChainCacheKey, ChainCacheEntry>> = {};
 // ---------------------------------------------------------------------------
 
 let _rpiClient: RPIApiClient | null = null;
+let _rpiAuthService: RPIAuthService | null = null;
 
 function getRPIClient(): RPIApiClient {
   if (_rpiClient) return _rpiClient;
@@ -446,7 +449,7 @@ function getRPIClient(): RPIApiClient {
       `chain cache: RPIApiClient setup missing env vars: ${missing.join(", ")}`,
     );
   }
-  const authService = new RPIAuthService(
+  _rpiAuthService = new RPIAuthService(
     process.env.RPI_INTEGRATION_API_URL!,
     process.env.RPI_OAUTH_CLIENT_ID!,
     process.env.RPI_OAUTH_CLIENT_SECRET!,
@@ -455,10 +458,18 @@ function getRPIClient(): RPIApiClient {
   );
   _rpiClient = new RPIApiClient(
     process.env.RPI_INTEGRATION_API_URL!,
-    authService,
+    _rpiAuthService,
     process.env.RPI_DEFAULT_CLIENT_ID!,
   );
   return _rpiClient;
+}
+
+// Mint a proxy-user token for direct RPI calls. The raw RPIApiClient fail-closes
+// on an undefined token (proxy fallback lives in the tool-auth wrapper, not the
+// client), so test-side direct calls must pass an explicit token.
+async function getProxyToken(): Promise<string> {
+  getRPIClient(); // ensures _rpiAuthService is built
+  return _rpiAuthService!.getProxyToken();
 }
 
 const FILE_TYPE_BY_KEY: Record<
@@ -478,10 +489,14 @@ async function fetchFirstRecord(
   key: ChainCacheKey,
 ): Promise<ChainCacheEntry> {
   const apiClient = getRPIClient();
+  // The raw client fail-closes on a missing token — pass the service-account token.
+  const token = await getProxyToken();
   if (key === "clients") {
+    // The caller's OWN tenants (any user may read them); the cluster-wide client
+    // list is a cluster-admin read, and the eval may run as a non-admin login.
     const res = await apiClient.get<{
       clients?: Array<{ id?: string | null; name?: string | null }>;
-    }>(undefined, "/cluster/operations/clients");
+    }>(token, "/authentication/user-client-list");
     const first = (res?.clients ?? []).find(
       (x) => !!x?.id && !!x?.name,
     );
@@ -489,7 +504,7 @@ async function fetchFirstRecord(
   }
   const res = await searchFileInfos<{
     results?: Array<{ id?: string | null; name?: string | null }>;
-  }>(apiClient, undefined, {
+  }>(apiClient, token, {
     fileTypes: [FILE_TYPE_BY_KEY[key]],
     pageSize: 5,
   });
@@ -508,7 +523,12 @@ async function fetchFirstRecord(
 export async function buildChainCache(keys: ChainCacheKey[]): Promise<void> {
   for (const key of keys) {
     if (_chainCache[key]) continue;
-    _chainCache[key] = await fetchFirstRecord(key);
+    // Per key: one key's failure fails only its own chain scenario, never the others.
+    try {
+      _chainCache[key] = await fetchFirstRecord(key);
+    } catch (err) {
+      _chainCache[key] = { name: null, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 }
 
@@ -550,7 +570,7 @@ export function getSubAgentToolCalls(
 /**
  * ORCHESTRATOR-level tool calls — the parent's own `tool-call` events (e.g.
  * render_view_dashboard, render_chart, set_active_tenant), NOT skill dispatches or
- * sub-agent calls. Phase 2 (#27957) moved dashboards from skill routing to the
+ * sub-agent calls. Phase 2 moved dashboards from skill routing to the
  * deterministic render_view_dashboard tool, which the parent calls directly — this
  * lets a scenario assert that routing DECISION (the right tool + its viewId) where
  * the skill-based path (getRoutedSkill/subAgentToolCalls) sees nothing.
@@ -791,6 +811,18 @@ export function getAllDispatches(events: TelemetryEvent[]): string[] {
     if (e.type === "tool-call" && e.toolName === "execute_skill") {
       const args = e.args as { skillName?: string } | undefined;
       if (args?.skillName) out.push(args.skillName);
+    }
+  }
+  return out;
+}
+
+/** The `execute_skill` dispatches in order, with the operation each passed (if any). */
+export function getDispatchArgs(events: TelemetryEvent[]): Array<{ skillName?: string; operation?: string }> {
+  const out: Array<{ skillName?: string; operation?: string }> = [];
+  for (const e of events) {
+    if (e.type === "tool-call" && e.toolName === "execute_skill") {
+      const args = e.args as { skillName?: string; operation?: string } | undefined;
+      out.push({ skillName: args?.skillName, operation: args?.operation });
     }
   }
   return out;

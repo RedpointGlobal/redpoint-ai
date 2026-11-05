@@ -65,7 +65,7 @@ export function registerScheduleTools(server: McpServer, client: DRHApiClient) {
       title: "Upsert Schedule",
       description: "Create or update a schedule. PUT /schedules-v3.",
       inputSchema: {
-        body: z.record(z.unknown()).describe("Schedule payload."),
+        body: z.record(z.string(), z.unknown()).describe("Schedule payload."),
         clientId: drhClientIdSchema,
       },
       annotations: MUTATING,
@@ -91,7 +91,7 @@ export function registerScheduleTools(server: McpServer, client: DRHApiClient) {
       title: "Calculate Schedule Times",
       description: "Calculate schedule times (no persistence). POST /schedules-v3/calculate-schedule-times.",
       inputSchema: {
-        body: z.record(z.unknown()).describe("Calculation request payload."),
+        body: z.record(z.string(), z.unknown()).describe("Calculation request payload."),
         clientId: drhClientIdSchema,
       },
       annotations: READ_ONLY,
@@ -167,7 +167,7 @@ export function registerScheduleTools(server: McpServer, client: DRHApiClient) {
       description: "Partially update a schedule. PATCH /schedules-v3/{id}.",
       inputSchema: {
         scheduleId: scheduleIdArg,
-        body: z.record(z.unknown()).describe("Schedule patch payload."),
+        body: z.record(z.string(), z.unknown()).describe("Schedule patch payload."),
         clientId: drhClientIdSchema,
       },
       annotations: MUTATING,

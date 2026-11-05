@@ -20,7 +20,7 @@ export const threads = pgTable("threads", {
 });
 
 /**
- * #27828 — per-conversation active RPI tenant (X-ClientID). Light store keyed by
+ * Per-conversation active RPI tenant (X-ClientID). Light store keyed by
  * (conversationId, userId, workspaceId); conversationId is the AI SDK chat id (a
  * non-UUID string), so it is text, not the uuid thread id. userId = per-USER
  * isolation. Mirrors the SQLite `conversationClients` table.
@@ -82,4 +82,20 @@ export const auditLogs = pgTable("audit_logs", {
   details: jsonb("details"),
   userId: text("user_id"),
   createdAt: timestamp("created_at").notNull(),
+});
+
+/** Who owns a thread (see schema.ts threadOwners). */
+export const threadOwners = pgTable("thread_owners", {
+  threadId: uuid("thread_id")
+    .primaryKey()
+    .references(() => threads.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+});
+
+/** Who owns an API key (see schema.ts apiKeyOwners). */
+export const apiKeyOwners = pgTable("api_key_owners", {
+  keyId: uuid("key_id")
+    .primaryKey()
+    .references(() => apiKeys.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
 });

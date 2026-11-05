@@ -88,6 +88,68 @@ describe("repo skills/ directory", () => {
     expect(foundation!.dispatch ?? false).toBe(false);
   });
 
+  it("drh-data-quality tells the sub-agent that count is a look-back window in DAYS, with a wide default", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const body = skills.find((s) => s.name === "drh-data-quality")!.instructions.replace(/\s+/g, " ");
+    // A small count (or none) returns an empty list even when history exists, so the
+    // guidance names all three windowed tools, says days not records, and gives the default.
+    for (const tool of ["drh_get_hygiene_scores", "drh_get_match_confidence", "drh_get_processed_matches"]) expect(body).toContain(tool);
+    expect(body).toContain("look-back window in days");
+    expect(body).toContain("not a number of records");
+    expect(body).toContain("count: 3650");
+  });
+
+  it("drh-datasources' `get` operation holds the name-resolving lists and the three summary getters", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const ops = skills.find((s) => s.name === "drh-datasources")!.operations as Record<string, string[]>;
+    // A "my default database" question routed to `get` must still reach the consolidation
+    // rate and summaries; without them the sub-agent answered that the rate wasn't there.
+    // The lists resolve a database or source named in the question to its id.
+    expect(ops.get).toEqual([
+      "drh_list_databases",
+      "drh_list_sources",
+      "drh_get_database_by_id",
+      "drh_get_default_database",
+      "drh_get_source_by_id",
+      "drh_get_database_source",
+      "drh_get_database_summary",
+      "drh_get_database_cdp_summary",
+      "drh_get_database_consolidation_rate",
+    ]);
+  });
+
+  it("drh-feeds' `get` operation holds the list that resolves a feed's name to its id", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const ops = skills.find((s) => s.name === "drh-feeds")!.operations as Record<string, string[]>;
+    expect(ops.get).toEqual([
+      "drh_list_feeds",
+      "drh_get_feed_by_id",
+      "drh_get_database_feed",
+      "drh_get_feed_metadata",
+      "drh_get_database_feeds_summary",
+    ]);
+  });
+
+  it("drh-datasources, drh-feeds and drh-data-quality say a name is not an id, right after the bullet that fetches by name", async () => {
+    const { readFileSync } = await import("fs");
+    // With no list in the menu, or none consulted, a by-name question made the sub-agent
+    // invent an id (from the name's digits, or the name itself) and report the wrong record.
+    const rule =
+      "  A name is not an id: never derive or guess an id from a name or its digits. Find the name in the\n" +
+      "  list tool's results to get its id, then fetch by that id; if the name isn't listed, say it wasn't\n" +
+      "  found — do not invent an id.\n";
+    const after: Record<string, string> = {
+      "drh-datasources": "- **Get** a single database or source when the user names or ids one.\n",
+      "drh-feeds": "- **Get** a single feed, its metadata, or a database's feed summary when the user names or ids one.\n",
+      "drh-data-quality":
+        "- **Subject areas** — list the subject areas or fetch one and its columns when asked about the data\n  model / schema.\n",
+    };
+    for (const [name, bullet] of Object.entries(after)) {
+      const md = readFileSync(join(SKILLS_DIR, name, "SKILL.md"), "utf8");
+      expect({ name, once: md.split(rule).length - 1, placed: md.includes(bullet + rule) }).toEqual({ name, once: 1, placed: true });
+    }
+  });
+
   it("rpi-domain-expert is a dispatched (dispatch:true), tool-less knowledge expert", async () => {
     const skills = await loadSkillsFromDirectory(SKILLS_DIR);
     const expert = skills.find((s) => s.name === "rpi-domain-expert");
@@ -240,5 +302,159 @@ describe("repo skills/ directory", () => {
         "verify_connection",
       );
     }
+  });
+
+  // The router picks an rpi-workflows operation from the words in the prompt.
+  // "Get the run log for workflow-association instance X" was sometimes routed
+  // as "instance", whose menu had no log tool, and "all the activity results of
+  // run X" as "activity", whose menu had no all-results tool: either way the
+  // sub-agent named the tool instead of calling it. The run-log getter is in
+  // `instance` as well as `logs`, the all-results getter in `activity` as well
+  // as `instance`. The routing eval's workflows-instance-summaries and
+  // workflows-activity-results guard the other side: a summaries or a
+  // single-activity request still picks its own tool.
+  it("rpi-workflows: the run-log and all-results getters are in every operation a request for them is routed to", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const workflows = skills.find((s) => s.name === "rpi-workflows");
+    expect(workflows?.operations?.activity).toEqual([
+      "get_workflow_activity_results",
+      "get_workflow_activity_log",
+      "get_workflow_activity_assets",
+      "get_workflow_activity_sql_trace",
+      "get_workflow_all_activity_results",
+    ]);
+    expect(workflows?.operations?.instance).toEqual([
+      "get_workflow_all_activity_results",
+      "list_workflow_instance_summaries",
+      "get_workflow_association_instance_logs",
+    ]);
+    expect(workflows?.operations?.logs).toEqual(["get_workflow_association_instance_logs"]);
+  });
+
+  // A compound ask ("list my interactions, then the details of X and its last run's
+  // counts") is split into dispatches all routed as `runs`; the detail one reads the
+  // interaction by id, so get_interaction_by_id is in `runs` as well as `get`.
+  it("rpi-interactions: a last run's counts and the interaction's detail can be read under the runs operation", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const interactions = skills.find((s) => s.name === "rpi-interactions");
+    expect(interactions?.operations?.runs).toEqual([
+      "summarize_interaction_runs",
+      "list_interactions",
+      "get_interaction_by_name",
+      "get_interaction_by_id",
+      "get_interaction_workflow_instances",
+    ]);
+  });
+
+  it("rpi-admin: the caller's client list is in every operation a request for it is routed to", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const admin = skills.find((s) => s.name === "rpi-admin");
+    expect(admin?.operations?.identity).toEqual([
+      "get_user_profile",
+      "get_user_client_list",
+      "get_user_recent_items",
+      "verify_connection",
+    ]);
+    expect(admin?.operations?.auth).toEqual([
+      "verify_connection",
+      "validate_token_status",
+      "get_login_settings",
+      "get_user_client_list",
+    ]);
+    expect(admin?.operations?.diagnostics).toEqual([
+      "get_cluster_api_error_log",
+      "get_cluster_audit_history",
+      "get_user_client_list",
+      "verify_connection",
+    ]);
+  });
+});
+
+describe("rpi-decision-rules declares NO operations — the sub-agent always gets the whole menu", () => {
+  it("no operation can hide a tool: every decision-rule question reaches all ten", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const skill = skills.find((s) => s.name === "rpi-decision-rules")!;
+    expect(skill.operations).toBeUndefined();
+    expect(skill.mcpToolFilter).toHaveLength(10);
+  });
+});
+
+describe("rpi-health declares NO operations — the sub-agent always gets the whole menu", () => {
+  it("no operation can hide a tool: every health question reaches both", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const skill = skills.find((s) => s.name === "rpi-health")!;
+    expect(skill.operations).toBeUndefined();
+    expect(skill.mcpToolFilter).toEqual([
+      "get_system_health_availability",
+      "get_system_health_monitoring_overview",
+    ]);
+  });
+});
+
+describe("rpi-single-customer-view declares NO operations — the sub-agent always gets the whole menu", () => {
+  it("no operation can hide a tool: every SCV question reaches all six", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const skill = skills.find((s) => s.name === "rpi-single-customer-view")!;
+    expect(skill.operations).toBeUndefined();
+    expect(skill.mcpToolFilter).toEqual([
+      "list_single_customer_views",
+      "get_single_customer_view",
+      "get_single_customer_view_by_name",
+      "get_single_customer_view_attribute_group",
+      "get_single_customer_view_attribute_group_by_name",
+      "get_single_customer_view_event_details_html",
+    ]);
+  });
+});
+
+describe("rpi-users-permissions declares NO operations — the sub-agent always gets the whole menu", () => {
+  it("no operation can hide a tool: every users-and-permissions question reaches all seven", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const skill = skills.find((s) => s.name === "rpi-users-permissions")!;
+    expect(skill.operations).toBeUndefined();
+    expect(skill.mcpToolFilter).toEqual([
+      "list_users",
+      "get_user_details",
+      "list_user_groups",
+      "get_user_group",
+      "get_user_group_by_name",
+      "get_user_permissions",
+      "list_available_permissions",
+    ]);
+  });
+});
+
+describe("rpi-operations declares NO operations — the sub-agent always gets the whole menu", () => {
+  it("no operation can hide a tool: every operations question reaches all seven", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const skill = skills.find((s) => s.name === "rpi-operations")!;
+    expect(skill.operations).toBeUndefined();
+    expect(skill.mcpToolFilter).toEqual([
+      "get_operation_audit_history",
+      "get_operation_sql_audit_history",
+      "get_operation_housekeeping_logs",
+      "list_operation_system_tasks",
+      "list_execution_services",
+      "get_job_status",
+      "get_job_log",
+    ]);
+  });
+});
+
+describe("rpi-cluster-users declares NO operations — the sub-agent always gets the whole menu", () => {
+  it("no operation can hide a tool: every cluster-user question reaches all eight", async () => {
+    const skills = await loadSkillsFromDirectory(SKILLS_DIR);
+    const skill = skills.find((s) => s.name === "rpi-cluster-users")!;
+    expect(skill.operations).toBeUndefined();
+    expect(skill.mcpToolFilter).toEqual([
+      "list_cluster_users",
+      "get_cluster_user",
+      "get_cluster_user_by_name",
+      "get_cluster_user_clients",
+      "get_cluster_user_profile",
+      "list_cluster_external_users",
+      "get_cluster_external_user",
+      "get_cluster_external_user_clients",
+    ]);
   });
 });

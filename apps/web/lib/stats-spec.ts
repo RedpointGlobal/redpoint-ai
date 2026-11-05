@@ -1,5 +1,5 @@
 /**
- * #27897 (P2) — LOCAL mirror of the stat-tile contract for the web renderer.
+ * P2 — LOCAL mirror of the stat-tile contract for the web renderer.
  *
  * Same rationale as chart-spec.ts: apps/web doesn't import the @redpoint-ai/shared
  * *package* (Next/webpack workspace hiccup), so the type is mirrored here. The

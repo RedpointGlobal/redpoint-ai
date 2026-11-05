@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createMiddleware } from "hono/factory";
 import { zValidator } from "@hono/zod-validator";
 import {
   WorkspaceCreateSchema,
@@ -19,6 +20,9 @@ import { listProviders } from "../config/providers.js";
 import { getSkillRegistry } from "../skills/registry-singleton.js";
 import { isDispatchable, isInlinedExpert } from "@redpoint-ai/skills";
 import { getTrace, clearTrace, subscribeTrace } from "../lib/trace-buffer.js";
+import { callerId, isDevMode } from "../auth/caller.js";
+import { traceStreams } from "../lib/web-limits.js";
+import { tooManyRequests } from "../lib/rate-limit.js";
 
 export const workspaceRoutes = new Hono();
 
@@ -35,6 +39,27 @@ interface CachedRuntimeStatus {
   expires: number;
 }
 const runtimeStatusCache = new Map<string, CachedRuntimeStatus>();
+/** The most entries the runtime-status cache holds (one per workspace × caller token × location). */
+export const MAX_RUNTIME_STATUS_ENTRIES = 1_000;
+
+/** Bounded: expired entries are swept, and past the cap the oldest go first. */
+export function boundRuntimeStatusCache(): void {
+  if (runtimeStatusCache.size > 100) {
+    const now = Date.now();
+    for (const [k, v] of runtimeStatusCache) if (now >= v.expires) runtimeStatusCache.delete(k);
+  }
+  for (const k of runtimeStatusCache.keys()) {
+    if (runtimeStatusCache.size <= MAX_RUNTIME_STATUS_ENTRIES) break;
+    runtimeStatusCache.delete(k);
+  }
+}
+
+/** How many entries the runtime-status cache holds (tests). */
+export const runtimeStatusCacheSize = (): number => runtimeStatusCache.size;
+/** Fill the runtime-status cache directly (tests). */
+export const primeRuntimeStatusCache = (key: string, expires: number): void => {
+  runtimeStatusCache.set(key, { value: {}, expires });
+};
 
 workspaceRoutes.get("/", async (c) => {
   const result = await db.select().from(workspaces);
@@ -57,7 +82,9 @@ workspaceRoutes.get("/", async (c) => {
     : result.filter(
         (w: typeof workspaces.$inferSelect) => w.name !== WORKSPACE_NAMES.drh,
       );
-  return c.json(filtered);
+  // A workspace-scoped API key sees only its workspace (middleware/auth.ts 404s the rest).
+  const scope = c.get("user")?.workspaceId;
+  return c.json(scope ? filtered.filter((w: typeof workspaces.$inferSelect) => w.id === scope) : filtered);
 });
 
 workspaceRoutes.get("/:id", async (c) => {
@@ -124,6 +151,8 @@ workspaceRoutes.get("/:id/tools", async (c) => {
     description: tool.description ?? "",
     inputSchema: (tool as { inputSchema?: unknown }).inputSchema ?? null,
   }));
+  // Listing only: end the per-request MCP sessions now.
+  await mcpManager.release(tools);
 
   return c.json(list);
 });
@@ -140,9 +169,11 @@ workspaceRoutes.get("/:id/tools", async (c) => {
 
 workspaceRoutes.get("/:id/trace", async (c) => {
   const id = c.req.param("id");
-  const events = getTrace(id);
+  // The caller's OWN events only (they carry tool results); clear clears own only.
+  const user = callerId(c);
+  const events = getTrace(id, user);
   if (c.req.query("clear") === "1") {
-    clearTrace(id);
+    clearTrace(id, user);
   }
   return c.json(events);
 });
@@ -158,9 +189,17 @@ workspaceRoutes.get("/:id/trace", async (c) => {
 // new ones arrive. Then we subscribe to live appends.
 workspaceRoutes.get("/:id/trace/stream", (c) => {
   const id = c.req.param("id");
+  const user = callerId(c);
+  // At most MAX_TRACE_STREAMS_PER_USER open at once per caller (lib/web-limits.ts).
+  const release = traceStreams.acquire(user);
+  if (!release) return tooManyRequests(c, 5);
+  let teardown = release;
 
   return new Response(
     new ReadableStream({
+      cancel() {
+        teardown();
+      },
       start(controller) {
         const encoder = new TextEncoder();
         const send = (event: unknown) => {
@@ -171,10 +210,10 @@ workspaceRoutes.get("/:id/trace/stream", (c) => {
 
         // Replay existing buffer so the client picks up events that fired
         // before it connected.
-        for (const ev of getTrace(id)) send(ev);
+        for (const ev of getTrace(id, user)) send(ev);
 
         // Live fan-out
-        const unsub = subscribeTrace(id, send);
+        const unsub = subscribeTrace(id, user, send);
 
         // Heartbeat every 25s to keep proxies / browsers from idle-closing
         // the SSE stream. Browsers don't surface SSE comments to listeners,
@@ -187,10 +226,14 @@ workspaceRoutes.get("/:id/trace/stream", (c) => {
           }
         }, 25_000);
 
-        // Tear down on client disconnect
-        c.req.raw.signal.addEventListener("abort", () => {
+        // Tear down on client disconnect (or cancel): the stream's slot is freed.
+        teardown = () => {
           clearInterval(heartbeat);
           unsub();
+          release();
+        };
+        c.req.raw.signal.addEventListener("abort", () => {
+          teardown();
           try {
             controller.close();
           } catch {
@@ -337,6 +380,8 @@ workspaceRoutes.get("/:id/runtime-status", async (c) => {
         const baseName = fullName.includes("__") ? fullName.split("__").pop()! : fullName;
         toolsForThisServer.push(baseName);
       }
+      // A probe: end the per-request MCP sessions now.
+      await mcpManager.release(tools);
     } catch (e) {
       connError = e instanceof Error ? e.message : String(e);
       errors.push(`MCP "${conn.name}" unreachable: ${connError}`);
@@ -462,13 +507,31 @@ workspaceRoutes.get("/:id/runtime-status", async (c) => {
     value: result,
     expires: Date.now() + RUNTIME_STATUS_TTL_MS,
   });
+  boundRuntimeStatusCache();
 
   // instrumentation is merged fresh (not cached) so it tracks the live sink state.
   return c.json({ ...result, instrumentation });
 });
 
+/**
+ * Workspace CONFIG writes (create / update / delete) are dev-mode only. The
+ * workspaces are SHARED by every user, and a workspace's config decides where
+ * every user's token goes (its MCP URLs) and what the server runs (a stdio MCP):
+ * one user rewriting it would repoint everyone's tokens or run commands on the
+ * server. The web UI never writes them, and the seeded workspaces come from code.
+ * With auth on, every caller (RPI user, OIDC, API key) gets 403; dev mode (auth
+ * off, one local operator) may write.
+ */
+const configWritesDevOnly = createMiddleware(async (c, next) => {
+  if (!isDevMode()) {
+    return c.json({ error: "Workspace configuration can't be changed with auth on (dev mode only)" }, 403);
+  }
+  await next();
+});
+
 workspaceRoutes.post(
   "/",
+  configWritesDevOnly,
   zValidator("json", WorkspaceCreateSchema),
   async (c) => {
     const body = c.req.valid("json");
@@ -494,6 +557,7 @@ workspaceRoutes.post(
 
 workspaceRoutes.put(
   "/:id",
+  configWritesDevOnly,
   zValidator("json", WorkspaceCreateSchema),
   async (c) => {
   const id = c.req.param("id");
@@ -522,7 +586,7 @@ workspaceRoutes.put(
   return c.json(updated);
 });
 
-workspaceRoutes.delete("/:id", async (c) => {
+workspaceRoutes.delete("/:id", configWritesDevOnly, async (c) => {
   const id = c.req.param("id");
   const [existing] = await db
     .select()

@@ -5,6 +5,8 @@
  * fail) and the exact-key-set + absence assertions on the shipped templates.
  */
 import { describe, it, expect } from "bun:test";
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   parseScopedEnv,
   renderEnvExample,
@@ -314,4 +316,22 @@ describe("checkComposeEnv — the container config-drift guard", () => {
       expect(k in COMPOSE_OVERRIDE_KEYS).toBe(true);
     }
   });
+});
+
+describe("AUTH_REQUIRED per scope", () => {
+  // The standalone executables run in service-credential mode (false); the hosted
+  // app requires sign-in (true). A binary zip shipping true demands a bearer token,
+  // so the account in its .env is never used.
+  const committed = parseScopedEnv(readFileSync(join(import.meta.dir, "../../.env.example"), "utf8")).vars;
+  const authOf = (text: string) => new Map(parseArtifactKV(text)).get("AUTH_REQUIRED");
+
+  for (const [name, vars] of [["fixture", parseScopedEnv(FIXTURE).vars], ["committed root .env.example", committed]] as const) {
+    it(`${name}: the RPI and DRH binary templates ship false`, () => {
+      expect(authOf(renderBinaryTemplate(vars, "mcp-rpi", "RPI MCP Server"))).toBe("false");
+      expect(authOf(renderBinaryTemplate(vars, "mcp-drh", "DRH MCP Server"))).toBe("false");
+    });
+    it(`${name}: the hosted app's .env.example stays true`, () => {
+      expect(authOf(renderEnvExample(vars))).toBe("true");
+    });
+  }
 });

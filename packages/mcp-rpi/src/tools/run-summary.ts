@@ -3,8 +3,9 @@ import type { components } from "../client/rpi-types.js";
 /**
  * Interaction dashboard aggregation. TWO paths:
  *
- * 1) SUMMARY (default, fast ~1-2s) — built purely from the reports/interaction
- *    endpoint (paginated, RPI-computed counts). Complete + cannot hang.
+ * 1) SUMMARY (default, fast ~1-2s) — interactions from ONE reports/interaction
+ *    request, runs from the run-counts endpoint (tenant-wide + per interaction,
+ *    bounded). Cannot hang.
  * 2) DAILY (opt-in, SLOW ~2min) — a per-day test/prod time series, ground out of
  *    the raw workflow-instances endpoint by adaptive date-chunking (that endpoint
  *    is super-linear in PageSize, so we grind it at PS=10 in small windows). Only
@@ -61,10 +62,13 @@ export async function withRetryOn429<T>(
 }
 
 // ---------------------------------------------------------------------------
-// reports/interaction pagination. RPI-COMPUTED, COMPLETE
-// per-interaction counts with REAL pagination (pageNumber / totalNumberOfPages) —
-// the sole source for the dashboard. fetchPage injected → pure + unit-testable;
-// live 429 backoff + per-call timeout live in the caller.
+// reports/interaction — ONE request, never paginated. RPI ignores `pageNumber`
+// on this endpoint: every page number returns page 1 (currentPage:1) and the same
+// rows, so a page loop only re-fetches page 1 and duplicates every row. pageSize
+// applies to a grain BELOW the per-interaction grouping; at the 255 maximum a
+// response with totalNumberOfPages > 1 means the tenant had more activity than
+// one response holds → the interaction list is partial (truncated). Rows are
+// one per interaction VERSION. fetchPage injected → pure + unit-testable.
 // ---------------------------------------------------------------------------
 
 type ReportRow = components["schemas"]["WorkflowFileSummaryJsonResponseMessage"];
@@ -76,82 +80,55 @@ export interface ReportPage {
   count?: number;
 }
 
-export interface ReportCollectResult {
+export interface ReportFetchResult {
   rows: ReportRow[];
-  pages: number;
-  /** Reports pagination bounded out (very dense tenant). Logged; does NOT flip the
-   *  summary's chart-scoped `truncated` (headline stays complete per option A). */
+  /** The one response did not hold every interaction (totalNumberOfPages > 1), or the call failed. */
   truncated: boolean;
   elapsedMs: number;
 }
 
-export async function collectReportPages(
-  fetchPage: (pageNumber: number) => Promise<ReportPage>,
-  opts?: { maxPages?: number; budgetMs?: number; now?: () => number; log?: (m: string) => void },
-): Promise<ReportCollectResult> {
-  const maxPages = opts?.maxPages ?? 50;
-  const budgetMs = opts?.budgetMs ?? 30_000;
+export async function fetchInteractionReport(
+  fetchPage: () => Promise<ReportPage>,
+  opts?: { now?: () => number; log?: (m: string) => void },
+): Promise<ReportFetchResult> {
   const now = opts?.now ?? (() => Date.now());
   const log = opts?.log ?? ((m: string) => console.error(m));
   const start = now();
-  const rows: ReportRow[] = [];
-  let page = 1;
-  let total = 1;
-  let truncated = false;
-  for (;;) {
-    if (page > maxPages || now() - start >= budgetMs) {
-      truncated = true;
-      break;
-    }
-    let resp: ReportPage;
-    try {
-      resp = await fetchPage(page);
-    } catch {
-      // Per-call failure/timeout → keep the pages we have, mark partial, stop.
-      truncated = true;
-      break;
-    }
-    rows.push(...(resp.results ?? []));
-    total = resp.totalNumberOfPages ?? 1;
-    const cur = resp.currentPage ?? page;
-    if (cur >= total) break;
-    page++;
+  let rows: ReportRow[] = [];
+  let truncated: boolean;
+  let totalPages: number | string = "?";
+  try {
+    const resp = await fetchPage();
+    rows = resp.results ?? [];
+    totalPages = resp.totalNumberOfPages ?? 1;
+    truncated = totalPages > 1;
+  } catch {
+    // Failure/timeout → no interaction list; the run totals come from run-counts.
+    truncated = true;
   }
   const elapsedMs = now() - start;
   log(
-    `[summarize_interaction_runs] reports pagesFetched=${page} rows=${rows.length} ` +
-      `totalPages=${total} elapsedMs=${elapsedMs} truncated=${truncated}`,
+    `[summarize_interaction_runs] report rows=${rows.length} totalPages=${totalPages} ` +
+      `elapsedMs=${elapsedMs} truncated=${truncated}`,
   );
-  return { rows, pages: page, truncated, elapsedMs };
+  return { rows, truncated, elapsedMs };
 }
 
 // ---------------------------------------------------------------------------
-// The reports-derived interaction dashboard. workflow-instances
-// is super-linear/unusable (PS=25 ~22s, PS=255 timeout even on a 3-run tenant), so
-// the dashboard is built PURELY from reports/interaction: complete + fast (~1-2s),
-// cannot hang by construction. Per-run daily buckets are dropped (no fast per-run
-// source); test/prod is at the INTERACTION grain (labelled as such, not runs).
+// The interaction dashboard. Interactions come from reports/interaction (one
+// row per interaction VERSION); RUNS come from the run-counts endpoint, because
+// a report row's executedWorkflowCount is not a run count. An interaction's runs
+// land on all its versions, so it is keyed by file.versionControlID (every
+// version), never file.id (one version) — counting by file.id misses most runs.
 // ---------------------------------------------------------------------------
 
-export interface InteractionRunEntry {
-  name: string;
-  runs: number;
-  type: "test" | "production";
-}
+const NIL_GUID = "00000000-0000-0000-0000-000000000000";
+const realId = (v: string | null | undefined): string | undefined =>
+  v && v !== NIL_GUID ? v : undefined;
 
-export interface ReportDashboard {
-  window: { fromDate: string; toDate: string };
-  totalRuns: number;
-  activeInteractions: number;
-  /** Interactions classified test (donut). */
-  testInteractions: number;
-  /** Interactions classified production (donut). */
-  productionInteractions: number;
-  /** Top-N interactions by run count (horizontal bar). */
-  runsPerInteraction: InteractionRunEntry[];
-  /** Reports pagination bounded out (very dense tenant) — figures then partial. */
-  truncated: boolean;
-  truncationNote?: string;
+/** The key of an interaction across all its versions: versionControlID, else file.id, else name. */
+export function interactionKey(row: ReportRow): string {
+  return realId(row.file?.versionControlID) ?? realId(row.file?.id) ?? `name:${row.name ?? "(unnamed)"}`;
 }
 
 /**
@@ -164,43 +141,158 @@ export function classifyInteractionType(row: ReportRow): "test" | "production" {
   return assocs.some((a) => a?.isTest === false) ? "production" : "test";
 }
 
-export function summarizeInteractionReports(
-  rows: ReportRow[],
-  opts: { fromDate: string; toDate: string; truncated: boolean; topN?: number },
-): ReportDashboard {
-  const topN = opts.topN ?? 10;
-  let totalRuns = 0;
-  let activeInteractions = 0;
-  let testInteractions = 0;
-  let productionInteractions = 0;
-  const entries: InteractionRunEntry[] = [];
+export interface ReportInteraction {
+  key: string;
+  name: string;
+  type: "test" | "production";
+  active: boolean;
+  lastActivityDate: string;
+}
 
+/** One entry per interaction (rows grouped by interactionKey), most recently active first. */
+export function dedupeInteractions(rows: ReportRow[]): ReportInteraction[] {
+  const byKey = new Map<string, ReportInteraction>();
   for (const r of rows) {
-    const runs = r.executedWorkflowCount ?? 0;
-    totalRuns += runs;
-    if ((r.activeWorkflowCount ?? 0) > 0) activeInteractions++;
+    const key = interactionKey(r);
+    const last = r.lastActivityDate ?? "";
+    const prev = byKey.get(key);
     const type = classifyInteractionType(r);
-    if (type === "production") productionInteractions++;
-    else testInteractions++;
-    entries.push({ name: r.name ?? "(unnamed)", runs, type });
+    const active = (r.activeWorkflowCount ?? 0) > 0;
+    if (!prev) {
+      byKey.set(key, { key, name: r.name ?? "(unnamed)", type, active, lastActivityDate: last });
+      continue;
+    }
+    if (type === "production") prev.type = "production";
+    if (active) prev.active = true;
+    if (last > prev.lastActivityDate) {
+      prev.lastActivityDate = last;
+      prev.name = r.name ?? prev.name;
+    }
   }
+  return [...byKey.values()].sort(
+    (a, b) => b.lastActivityDate.localeCompare(a.lastActivityDate) || a.name.localeCompare(b.name),
+  );
+}
 
-  const runsPerInteraction = entries
+export interface PerInteractionCounts {
+  /** Runs per interaction key, for the keys whose count call succeeded. */
+  counts: Map<string, number>;
+  /** Every key was counted (no budget cut-off, no failed call). */
+  complete: boolean;
+}
+
+/**
+ * Count runs for each key (one run-counts call per key) with bounded parallelism.
+ * No new call starts once the wall-clock budget is spent; a failed call is skipped.
+ * Either leaves `complete` false. countOne/now injected → unit-testable.
+ */
+export async function countRunsPerInteraction(
+  keys: string[],
+  countOne: (key: string) => Promise<number>,
+  opts?: { concurrency?: number; budgetMs?: number; now?: () => number },
+): Promise<PerInteractionCounts> {
+  const concurrency = Math.max(1, opts?.concurrency ?? 5);
+  const budgetMs = opts?.budgetMs ?? 3_500;
+  const now = opts?.now ?? (() => Date.now());
+  const start = now();
+  const counts = new Map<string, number>();
+  let complete = true;
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      if (next >= keys.length) return;
+      if (now() - start >= budgetMs) {
+        complete = false;
+        return;
+      }
+      const key = keys[next++]!;
+      try {
+        counts.set(key, await countOne(key));
+      } catch {
+        complete = false;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, keys.length) }, worker));
+  return { counts, complete };
+}
+
+export interface InteractionRunEntry {
+  name: string;
+  runs: number;
+  type: "test" | "production";
+}
+
+export interface ReportDashboard {
+  window: { fromDate: string; toDate: string };
+  /** Runs in the window, from RPI's run counts. */
+  totalRuns: number;
+  testRuns: number;
+  productionRuns: number;
+  /** Interactions with a currently active workflow. */
+  activeInteractions: number;
+  /** Interactions classified test (donut). */
+  testInteractions: number;
+  /** Interactions classified production (donut). */
+  productionInteractions: number;
+  /** Top-N interactions by run count (horizontal bar). */
+  runsPerInteraction: InteractionRunEntry[];
+  /** Set when runsPerInteraction was ranked from only part of the interactions. */
+  runsPerInteractionNote?: string;
+  /** The interaction list is partial (too much activity for one report response). */
+  truncated: boolean;
+  truncationNote?: string;
+}
+
+type RunTotals = components["schemas"]["InteractionRunCountsResultsJsonResponseMessage"];
+
+const modeCount = (totals: RunTotals, mode: string): number =>
+  totals.executionModes?.find((m) => m?.executionMode === mode)?.resultsCount ?? 0;
+
+/**
+ * Assemble the dashboard. Pure: run totals, the deduped interactions and the
+ * per-interaction counts are all passed in.
+ */
+export function summarizeInteractionRuns(input: {
+  fromDate: string;
+  toDate: string;
+  runTotals: RunTotals;
+  interactions: ReportInteraction[];
+  /** Keys whose runs were requested (the candidate set, most recent first). */
+  candidates: string[];
+  perInteraction: PerInteractionCounts;
+  reportTruncated: boolean;
+  topN?: number;
+}): ReportDashboard {
+  const topN = input.topN ?? 10;
+  const { interactions, candidates, perInteraction } = input;
+  const byKey = new Map(interactions.map((i) => [i.key, i]));
+  const runsPerInteraction = candidates
+    .filter((k) => perInteraction.counts.has(k))
+    .map((k) => ({ name: byKey.get(k)?.name ?? "(unnamed)", runs: perInteraction.counts.get(k)!, type: byKey.get(k)?.type ?? "test" }))
     .filter((e) => e.runs > 0)
     .sort((a, b) => b.runs - a.runs || a.name.localeCompare(b.name))
     .slice(0, topN);
-
+  const ranked = candidates.filter((k) => perInteraction.counts.has(k)).length;
+  const exact = !input.reportTruncated && perInteraction.complete && candidates.length === interactions.length;
   return {
-    window: { fromDate: opts.fromDate, toDate: opts.toDate },
-    totalRuns,
-    activeInteractions,
-    testInteractions,
-    productionInteractions,
+    window: { fromDate: input.fromDate, toDate: input.toDate },
+    totalRuns: input.runTotals.totalRuns ?? 0,
+    testRuns: modeCount(input.runTotals, "Test"),
+    productionRuns: modeCount(input.runTotals, "Production"),
+    activeInteractions: interactions.filter((i) => i.active).length,
+    testInteractions: interactions.filter((i) => i.type === "test").length,
+    productionInteractions: interactions.filter((i) => i.type === "production").length,
     runsPerInteraction,
-    truncated: opts.truncated,
-    ...(opts.truncated
+    ...(exact
+      ? {}
+      : {
+          runsPerInteractionNote: `Ranked from the ${ranked} most recently active of ${interactions.length}${input.reportTruncated ? "+" : ""} interactions, so an interaction outside them may have more runs. Tell the user the ranking is partial.`,
+        }),
+    truncated: input.reportTruncated,
+    ...(input.reportTruncated
       ? {
-          truncationNote: `This tenant has more interactions than fit the fetch budget, so these figures are PARTIAL. Tell the user the summary is incomplete and to narrow the date range.`,
+          truncationNote: `This tenant had more interaction activity in the window than one report holds, so the interaction counts and the ranking are PARTIAL (totalRuns is complete). Tell the user and suggest a narrower date range.`,
         }
       : {}),
   };

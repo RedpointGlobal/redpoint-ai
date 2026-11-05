@@ -95,7 +95,7 @@ Self-contained tool servers you can hand to any MCP client — no Bun or Node on
 
 6. Point your MCP client at `http://localhost:3002/mcp` (RPI) / `http://localhost:3003/mcp` (DRH).
 
-> **Read-only by default.** The standalone servers gate their write tools — `tools/list` shows only read tools (RPI 42 of 47, DRH 57 of 93), and a `tools/call` on a gated write is rejected with `Tool <name> disabled`. This is intentional and not switchable via `.env`; the write tools stay registered in source and are re-enabled by a small in-repo allowlist plus a rebuild. See [architecture.md → Read-only enforcement](architecture.md#read-only-enforcement-standalone-servers).
+> **Read-only by default.** The standalone servers gate their write tools — `tools/list` leaves the gated writes out (RPI 197 of 202: its 49 hand-written tools minus 5 gated writes, plus 153 generated reads; DRH 57 of 93), and a `tools/call` on a gated write is rejected with `Tool <name> disabled`. This is intentional and not switchable via `.env`; the write tools stay registered in source and are re-enabled by a small in-repo allowlist plus a rebuild. See [architecture.md → Read-only enforcement](architecture.md#read-only-enforcement-standalone-servers).
 
 ### What's in each zip
 
@@ -149,4 +149,5 @@ On first run, the server seeds the product workspaces — each preloaded with it
 - [Skills](skills.md) — learn about the skill system
 - [Providers](providers.md) — set up additional LLM providers
 - [MCP RPI Server](rpi-mcp-server.md) — RPI tool surface + per-user auth model
+- [MCP DRH Server](drh-mcp-server.md) — DRH tool surface, configuration and binary build
 - [API Reference](api.md)

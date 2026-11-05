@@ -1,15 +1,12 @@
 /**
- * SSO (Keycloak) password-grant helpers — deterministic unit tests.
- *
- * The crux (homie's spec): the provider must POST grant_type=password with
- * client_id=rpi and NO client_secret to the DISCOVERED PUBLIC token endpoint
- * (derived from login-settings' openIDIssuer, NEVER the cluster-internal
- * `tokenEndpoint` field), and map the response into the rpi* session fields.
+ * SSO (Keycloak) helpers — deterministic unit tests: discovery of the PUBLIC
+ * token endpoint (derived from login-settings' openIDIssuer, NEVER the
+ * cluster-internal `tokenEndpoint` field), the OIDC redirect options, mapping the
+ * redirect tokens into the rpi* session fields, and the public-client refresh.
  */
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import {
   discoverKeycloakSso,
-  keycloakPasswordGrant,
   keycloakRefresh,
   keycloakOidcOptions,
   mapKeycloakOidcAccount,
@@ -124,41 +121,6 @@ describe("discoverKeycloakSso", () => {
   it("returns null when neither discovery nor env yields a public issuer", async () => {
     installFetch({ loginSettingsOk: false });
     expect(await discoverKeycloakSso()).toBeNull();
-  });
-});
-
-describe("keycloakPasswordGrant", () => {
-  it("POSTs grant_type=password + client_id=rpi + scope=openid + NO client_secret to the discovered PUBLIC endpoint", async () => {
-    installFetch();
-    const session = await keycloakPasswordGrant("alice", "s3cret");
-    expect(session).not.toBeNull();
-
-    expect(tokenPosts).toHaveLength(1);
-    const post = tokenPosts[0]!;
-    expect(post.url).toBe(PUBLIC_TOKEN_ENDPOINT);
-    expect(post.params.get("grant_type")).toBe("password");
-    expect(post.params.get("client_id")).toBe("rpi");
-    expect(post.params.get("scope")).toBe("openid");
-    expect(post.params.get("username")).toBe("alice");
-    expect(post.params.get("password")).toBe("s3cret");
-    // PUBLIC client — a secret must never be sent.
-    expect(post.params.has("client_secret")).toBe(false);
-  });
-
-  it("maps the token response into rpi* session fields", async () => {
-    installFetch();
-    const before = Date.now();
-    const session = await keycloakPasswordGrant("alice", "s3cret");
-    expect(session!.rpiAccessToken).toBe("kc-access-token");
-    expect(session!.rpiRefreshToken).toBe("kc-refresh-token");
-    // expires_in 300s → ~+300000ms from now.
-    expect(session!.rpiExpiresAt).toBeGreaterThanOrEqual(before + 300_000);
-    expect(session!.rpiExpiresAt).toBeLessThanOrEqual(Date.now() + 300_000);
-  });
-
-  it("returns null when the grant is rejected (bad credentials)", async () => {
-    installFetch({ tokenStatus: 401 });
-    expect(await keycloakPasswordGrant("alice", "wrong")).toBeNull();
   });
 });
 

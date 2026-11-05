@@ -1,5 +1,5 @@
 /**
- * #27897 (P2) — the web mirror's defensive guard for stat-tile args. The server
+ * P2 — the web mirror's defensive guard for stat-tile args. The server
  * already validated, but <StatTiles> must never render malformed args.
  */
 import { describe, it, expect } from "bun:test";

@@ -1,5 +1,5 @@
 /**
- * #27897 (P2) — the stat-tile contract. Locks the shape render_stats and
+ * P2 — the stat-tile contract. Locks the shape render_stats and
  * <StatTiles> depend on: tiles validate (with/without sub), and the strict rules
  * (≥1 tile, ≤12, required value+label, no extra props) reject.
  */

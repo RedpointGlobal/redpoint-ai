@@ -492,13 +492,13 @@ describe("GET /workspaces/:id/trace", () => {
     const created = await (await createWorkspace()).json();
     const { appendTrace, getTrace } = await import("../lib/trace-buffer.js");
 
-    appendTrace(created.id, {
+    appendTrace(created.id, "dev-user", {
       timestamp: new Date().toISOString(),
       direction: "ToMCP",
       type: "tool-call",
       message: "→ test_tool",
     });
-    expect(getTrace(created.id)).toHaveLength(1);
+    expect(getTrace(created.id, "dev-user")).toHaveLength(1);
 
     const res = await app.request(
       url(`/workspaces/${created.id}/trace?clear=1`),
@@ -508,6 +508,6 @@ describe("GET /workspaces/:id/trace", () => {
     expect(returned).toHaveLength(1);
 
     // Buffer should be empty after the clear query param
-    expect(getTrace(created.id)).toHaveLength(0);
+    expect(getTrace(created.id, "dev-user")).toHaveLength(0);
   });
 });

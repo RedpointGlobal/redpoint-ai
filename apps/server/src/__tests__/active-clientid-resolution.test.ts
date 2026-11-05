@@ -1,5 +1,5 @@
 /**
- * #27828 Option B — a mid-turn set_active_tenant switch must apply to the
+ * A mid-turn set_active_tenant switch must apply to the
  * SUBSEQUENT RPI tool calls in the SAME turn.
  *
  * Mechanism: chat.ts holds the active client in a mutable per-request cell

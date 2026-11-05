@@ -49,6 +49,17 @@ export function resolveActiveClientId(
 }
 
 /**
+ * The RPI MCP connection's name (the seeded RPI workspace's `mcp[].name`). The
+ * caller's RPI identity — their token (Bearer + X-RPI-URL) and their RPI tenant
+ * (the injected `clientId`) — goes to THIS connection only. Any other connection
+ * (the DRH MCP server, a user-configured one) gets neither: the DRH server reads a
+ * per-call `clientId` as ITS tenant (an RPI tenant there is wrong and leaks the RPI
+ * tenant across products), and an RPI token means nothing to it. Those connections
+ * use the shared cached client (the server's own account).
+ */
+export const RPI_CONNECTION = "rpi";
+
+/**
  * Manages MCP client connections per workspace.
  * Lazily creates and caches connections. Namespaces tools by MCP server name.
  */
@@ -57,7 +68,10 @@ export class MCPClientManager {
   private clients = new Map<string, MCPClient>();
   // Cache: "workspaceId::serverName" -> PatchedTransport (for capability access)
   private transports = new Map<string, PatchedTransport>();
-  // #27828 — the RPI client/tenant (X-ClientID) is NO LONGER a mutable field on
+  // The per-request (ephemeral) clients behind a tools object returned by
+  // getToolsForWorkspace — closed by release(tools) when the turn ends.
+  private ephemeral = new WeakMap<object, MCPClient[]>();
+  // The RPI client/tenant (X-ClientID) is NO LONGER a mutable field on
   // this process-wide singleton (that leaked one user's/conversation's tenant to
   // everyone). It is threaded PER-REQUEST via the `activeClientId` param of
   // getToolsForWorkspace, resolved by the caller from per-conversation+per-user
@@ -75,17 +89,19 @@ export class MCPClientManager {
    *      tool call as the proxy user (RPI_PROXY_USER). This is the existing
    *      behavior and remains correct for shared/non-interactive contexts.
    *
-   *   2. Per-user auth (userRpiToken provided) — for HTTP transports we
+   *   2. Per-user auth (userRpiToken provided) — for the RPI connection
+   *      (RPI_CONNECTION; HTTP) we
    *      build a FRESH ephemeral client + transport with
    *      `Authorization: Bearer <userRpiToken>` baked in, scoped to this
    *      request only (no cache). RPI then sees each chat as the specific
    *      user who logged in via the rpi-native NextAuth provider in
    *      apps/web, applying that user's RBAC instead of the shared proxy.
    *
-   * The ephemeral client's lifetime is tied to the lifetime of the returned
-   * tools object — once the chat handler returns and the tools go out of
-   * scope, GC reclaims the client. We deliberately do NOT track ephemeral
-   * clients in any persistent map: that would conflate "for this request"
+   * The ephemeral clients belong to the returned tools object: the caller
+   * calls release(tools) when the turn ends, which closes each one and ends
+   * its MCP session on the server (the RPI MCP server caps each user's
+   * open sessions, so a session left to its idle expiry would hold a slot).
+   * They are not tracked per user: that would conflate "for this request"
    * with "for this user", which is wrong if the user pivots clients/tabs.
    *
    * stdio transports always go through the cached path — they don't have an
@@ -99,7 +115,7 @@ export class MCPClientManager {
     // the ephemeral transport as X-RPI-URL alongside the Bearer so mcp-rpi
     // targets the rep's instance for this request. Undefined = default instance.
     userRpiUrl?: string,
-    // Per-request RPI CLIENT/tenant (X-ClientID) for THIS request only (#27828).
+    // Per-request RPI CLIENT/tenant (X-ClientID) for THIS request only.
     // Resolved by the caller from per-conversation + per-user state — never a
     // singleton. May be a static string OR a live GETTER: a mid-turn
     // set_active_tenant switch must apply to SUBSEQUENT tool calls in the SAME
@@ -108,81 +124,105 @@ export class MCPClientManager {
     activeClientId?: string | (() => string | undefined),
   ): Promise<Record<string, Tool>> {
     const allTools: Record<string, Tool> = {};
+    const ephemeral: MCPClient[] = [];
+    this.ephemeral.set(allTools, ephemeral);
 
-    for (const conn of mcpConnections) {
-      const cacheKey = `${workspaceId}::${conn.name}`;
-      let client: MCPClient;
+    try {
+      for (const conn of mcpConnections) {
+        const cacheKey = `${workspaceId}::${conn.name}`;
+        let client: MCPClient;
 
-      if (userRpiToken && conn.transport === "http" && conn.url) {
-        // Ephemeral path — fresh client+transport with the user's Bearer (and
-        // the per-request location header when set). No cache write; this client
-        // lives for the request only.
-        client = await this.createClient(
-          conn,
-          undefined,
-          ephemeralAuthHeaders(userRpiToken, userRpiUrl),
-        );
-      } else {
-        // Cached path — shared across workspaces with the same connection.
-        const cached = this.clients.get(cacheKey);
-        if (cached) {
-          client = cached;
+        const isRpi = conn.name === RPI_CONNECTION;
+        if (isRpi && userRpiToken && conn.transport === "http" && conn.url) {
+          // Ephemeral path — fresh client+transport with the user's Bearer (and
+          // the per-request location header when set). No cache write; this client
+          // lives for the request only.
+          client = await this.createClient(
+            conn,
+            undefined,
+            ephemeralAuthHeaders(userRpiToken, userRpiUrl),
+          );
+          ephemeral.push(client);
         } else {
-          client = await this.createClient(conn, cacheKey);
-          this.clients.set(cacheKey, client);
-        }
-      }
-
-      // If allowedTools is set, pass it as a `names` filter to tools/list.
-      // MCP servers that honor filtering (like packages/mcp-rpi) will trim the
-      // response server-side. Legacy servers ignore the extra param; the
-      // client-side filter loop below handles those as defense-in-depth.
-      const tools = conn.allowedTools && conn.allowedTools.length > 0
-        ? await (async () => {
-            const defs = await client.listTools({
-              params: { names: conn.allowedTools } as unknown as {
-                cursor?: string;
-              },
-            });
-            return client.toolsFromDefinitions(defs);
-          })()
-        : await client.tools();
-
-      // Namespace tools by server name and apply allowedTools filter
-      for (const [toolName, tool] of Object.entries(tools)) {
-        const namespacedName = `${conn.name}__${toolName}`;
-
-        if (
-          conn.allowedTools &&
-          conn.allowedTools.length > 0 &&
-          !conn.allowedTools.includes(toolName)
-        ) {
-          continue;
+          // Cached path — shared across workspaces with the same connection.
+          const cached = this.clients.get(cacheKey);
+          if (cached) {
+            client = cached;
+          } else {
+            client = await this.createClient(conn, cacheKey);
+            this.clients.set(cacheKey, client);
+          }
         }
 
-        allTools[namespacedName] = {
-          ...tool,
-          execute: tool.execute
-            ? async (args: any, options: any) => {
-                mcpCalls.inc({ server: conn.name, tool: toolName });
-                // Inject the per-request RPI client/tenant, resolved at CALL TIME
-                // so a mid-turn set_active_tenant switch applies to this and every
-                // later call in the same turn. Overrides any clientId the LLM set;
-                // undefined → deployment default. Per-request closure → no cross-
-                // request / cross-user bleed.
-                const cid =
-                  resolveActiveClientId(activeClientId) ??
-                  process.env.RPI_DEFAULT_CLIENT_ID;
-                const enrichedArgs =
-                  cid !== undefined ? { ...args, clientId: cid } : args;
-                return tool.execute!(enrichedArgs, options);
-              }
-            : undefined,
-        } as typeof tool;
+        // If allowedTools is set, pass it as a `names` filter to tools/list.
+        // MCP servers that honor filtering (like packages/mcp-rpi) will trim the
+        // response server-side. Legacy servers ignore the extra param; the
+        // client-side filter loop below handles those as defense-in-depth.
+        const tools = conn.allowedTools && conn.allowedTools.length > 0
+          ? await (async () => {
+              const defs = await client.listTools({
+                params: { names: conn.allowedTools } as unknown as {
+                  cursor?: string;
+                },
+              });
+              return client.toolsFromDefinitions(defs);
+            })()
+          : await client.tools();
+
+        // Namespace tools by server name and apply allowedTools filter
+        for (const [toolName, tool] of Object.entries(tools)) {
+          const namespacedName = `${conn.name}__${toolName}`;
+
+          if (
+            conn.allowedTools &&
+            conn.allowedTools.length > 0 &&
+            !conn.allowedTools.includes(toolName)
+          ) {
+            continue;
+          }
+
+          allTools[namespacedName] = {
+            ...tool,
+            execute: tool.execute
+              ? async (args: any, options: any) => {
+                  mcpCalls.inc({ server: conn.name, tool: toolName });
+                  // RPI connection only: inject the per-request RPI client/tenant,
+                  // resolved at CALL TIME so a mid-turn set_active_tenant switch applies
+                  // to this and every later call in the same turn. Overrides any
+                  // clientId the LLM set; undefined → deployment default. Per-request
+                  // closure → no cross-request / cross-user bleed. Never for another
+                  // server (RPI_CONNECTION): its own default tenant stands.
+                  const cid = isRpi
+                    ? (resolveActiveClientId(activeClientId) ?? process.env.RPI_DEFAULT_CLIENT_ID)
+                    : undefined;
+                  const enrichedArgs =
+                    cid !== undefined ? { ...args, clientId: cid } : args;
+                  return tool.execute!(enrichedArgs, options);
+                }
+              : undefined,
+          } as typeof tool;
+        }
       }
+    } catch (error) {
+      // A later connection failed: end the sessions already opened for this request.
+      await this.release(allTools);
+      throw error;
     }
 
     return allTools;
+  }
+
+  /**
+   * End the turn's ephemeral clients: close each (ending its MCP session on the
+   * server) for a tools object returned by getToolsForWorkspace. Idempotent; a
+   * tools object with no ephemeral clients (the cached path) is a no-op. A close
+   * that fails is ignored — the server's idle expiry is the backstop.
+   */
+  async release(tools: object): Promise<void> {
+    const clients = this.ephemeral.get(tools);
+    if (!clients) return;
+    this.ephemeral.delete(tools);
+    await Promise.allSettled(clients.map((client) => client.close()));
   }
 
   /**

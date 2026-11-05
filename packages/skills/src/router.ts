@@ -1,4 +1,11 @@
-import { generateText, stepCountIs, jsonSchema, type Tool, type LanguageModel } from "ai";
+import {
+  generateText,
+  stepCountIs,
+  jsonSchema,
+  type Tool,
+  type LanguageModel,
+  type ModelMessage,
+} from "ai";
 import type { SkillRegistry } from "./registry.js";
 import type { Skill } from "./skill.js";
 import { isDispatchable, isInlinedExpert } from "./skill.js";
@@ -13,6 +20,32 @@ import { currentDatePreamble } from "./date-grounding.js";
  * still runs; low enough that a runaway loop is cut off fast.
  */
 const MAX_IDENTICAL_TOOL_CALLS = 2;
+
+/**
+ * After this many STEPS in which the guard short-circuited a call, the sub-agent is
+ * stuck re-asking for a result it already has: its next step may not call tools,
+ * so it answers from what it has. Steps, not calls: a model can emit the same call
+ * several times in parallel within ONE step, before it has seen a stop message; that
+ * step counts once, and the next step keeps its tools (with the stop messages in
+ * view) so the sub-agent can move on to the tool it still needs. 2 = one warned
+ * step is allowed; repeating after the warning ends the loop.
+ */
+const MAX_TRIPPED_STEPS = 2;
+
+/** Per-dispatch guard state, shared by the guard and the step hook. */
+export interface GuardState {
+  /** Calls the guard short-circuited. */
+  trips: number;
+  /** `trips` as of the last step hook, to tell whether the step before tripped. */
+  tripsSeen: number;
+  /** Steps in which the guard short-circuited at least one call. */
+  trippedSteps: number;
+}
+
+/** A fresh guard state for one dispatch. */
+export function createGuardState(): GuardState {
+  return { trips: 0, tripsSeen: 0, trippedSteps: 0 };
+}
 
 /** Stable stringify (sorted keys) so identical args hash identically regardless
  *  of key order; falls back to a best-effort string on any cycle/serialize error. */
@@ -42,9 +75,12 @@ function stableArgKey(args: unknown): string {
  * re-executing — the earlier result already stands, so this burns no tokens/time
  * and nudges the model to finish. Distinct calls and a legitimate re-check are
  * unaffected. Per-dispatch state (fresh Map per invocation) → no cross-request bleed.
+ * Each short-circuit is counted in `state.trips`; the dispatch's step hook
+ * (subAgentStepSettings) stops offering tools once the model keeps re-asking.
  */
 export function guardRepeatedToolCalls(
   tools: Record<string, Tool>,
+  state: GuardState = createGuardState(),
 ): Record<string, Tool> {
   const counts = new Map<string, number>();
   const guarded: Record<string, Tool> = {};
@@ -61,18 +97,69 @@ export function guardRepeatedToolCalls(
         const n = (counts.get(key) ?? 0) + 1;
         counts.set(key, n);
         if (n > MAX_IDENTICAL_TOOL_CALLS) {
-          return (
-            `Stop: you already called \`${name}\` with these exact arguments ` +
-            `${n - 1} time(s) in this task. The earlier result stands — reuse it. ` +
-            `Do not call \`${name}\` with the same arguments again; if you have ` +
-            `what you need, produce your final answer now.`
-          );
+          state.trips += 1;
+          // An MCP tool result (CallToolResult), not a bare string: the MCP tools'
+          // toModelOutput reads `"content" in result`, which throws on a string and
+          // fails the whole dispatch instead of handing the model this message.
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Stop: you already called \`${name}\` with these exact arguments ` +
+                  `${n - 1} time(s) in this task. The earlier result stands — reuse it. ` +
+                  `Do not call \`${name}\` with the same arguments again; if you have ` +
+                  `what you need, produce your final answer now.`,
+              },
+            ],
+          };
         }
         return (execute as (a: unknown, o: unknown) => unknown)(args, options);
       },
     } as Tool;
   }
   return guarded;
+}
+
+/** What subAgentStepSettings returns: generateText's per-step overrides. */
+export interface SubAgentStepSettings {
+  messages?: ModelMessage[];
+  toolChoice?: "none";
+}
+
+/**
+ * Per-step settings for a sub-agent dispatch (generateText's prepareStep).
+ * - Message-array history cap (same hook + utility as the parent orchestrator).
+ *   Load-bearing here too: an N+1 tool-loop inside one executeSkill turn can
+ *   overflow gpt-4o's 128K cliff just like the parent's accumulated chat history
+ *   can. Truncates oldest tool-result content, then drops oldest prunable turns;
+ *   active turn + system never prunable; throws on catastrophic.
+ * - Once the repeated-call guard has short-circuited calls in MAX_TRIPPED_STEPS
+ *   steps, the step gets `toolChoice: "none"`: the model must answer in text from
+ *   the results it already has instead of re-asking until maxSteps. Called once per
+ *   step, before it runs; it records whether the previous step tripped the guard. "none" rather
+ *   than an empty tool list: the tool definitions stay, since some providers
+ *   reject a history of tool calls when no tools are defined.
+ * - The LAST step the budget allows (stepNumber maxSteps - 1, 0-based) also gets
+ *   `toolChoice: "none"`, so a dispatch that uses its whole budget still ends on
+ *   a text answer. Without it, a tool call on that step ran, the budget stopped
+ *   the loop, and the sub-agent returned empty text. A budget of 1 is left as is
+ *   (its only step would lose its tools).
+ */
+export function subAgentStepSettings(
+  messages: ModelMessage[],
+  guard: GuardState,
+  step?: { stepNumber: number; maxSteps: number },
+): SubAgentStepSettings {
+  const pruned = pruneMessageHistory(messages);
+  const settings: SubAgentStepSettings = pruned === messages ? {} : { messages: pruned };
+  if (guard.trips > guard.tripsSeen) {
+    guard.trippedSteps += 1;
+    guard.tripsSeen = guard.trips;
+  }
+  const lastStep = step !== undefined && step.maxSteps > 1 && step.stepNumber >= step.maxSteps - 1;
+  if (guard.trippedSteps >= MAX_TRIPPED_STEPS || lastStep) settings.toolChoice = "none";
+  return settings;
 }
 
 /**
@@ -147,8 +234,10 @@ export function createSkillRouterTool(
 
       // Backstop against a sub-agent looping the same tool+args (see
       // guardRepeatedToolCalls). Applied to whatever tool set this dispatch got
-      // (operation subset or full filter). Fresh per-dispatch state.
-      tools = guardRepeatedToolCalls(tools);
+      // (operation subset or full filter). Fresh per-dispatch state, shared
+      // with the step hook below.
+      const guardState = createGuardState();
+      tools = guardRepeatedToolCalls(tools, guardState);
 
       // Dispatched knowledge experts (`type:"expert"` — inlined experts never
       // reach the dispatch path) get the shared, hardened grounding contract
@@ -173,7 +262,7 @@ export function createSkillRouterTool(
       // resolving "last 30 days") needs the current date too. Prepend it ONLY to
       // skills that opt in via dateGrounding — blanket-injecting on every
       // sub-agent tipped a borderline rpi-admin tool pick (list-clients
-      // regression, #27897). The orchestrator always has the date (chat.ts).
+      // regression). The orchestrator always has the date (chat.ts).
       const system = skill.dateGrounding
         ? `${currentDatePreamble()}\n\n${skillSystem}`
         : skillSystem;
@@ -223,16 +312,13 @@ export function createSkillRouterTool(
         // benefits most (~90% off cached prefixes); SDK drops keys for
         // inactive providers.
         providerOptions: cachingOptions,
-        // Message-array history cap (same hook + utility as the parent
-        // orchestrator). Load-bearing here too: an N+1 tool-loop inside one
-        // executeSkill turn can overflow gpt-4o's 128K cliff just like the
-        // parent's accumulated chat history can. Truncates
-        // oldest tool-result content, then drops oldest prunable turns;
-        // active turn + system never prunable; throws on catastrophic.
-        prepareStep: ({ messages }) => {
-          const pruned = pruneMessageHistory(messages);
-          return pruned === messages ? {} : { messages: pruned };
-        },
+        // History cap, the stuck-loop stop and the text-on-the-last-step
+        // guarantee (see subAgentStepSettings).
+        prepareStep: ({ messages, stepNumber }) =>
+          subAgentStepSettings(messages, guardState, {
+            stepNumber,
+            maxSteps: skill.maxSteps,
+          }),
       });
 
       return {

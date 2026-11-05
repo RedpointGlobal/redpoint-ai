@@ -5,6 +5,271 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.185]
+
+### Documentation
+
+- **The skill and scenario counts match the tree.** The FAQ said 15 skills (11 action, 4 experts); there are 28 (24 action, 4 experts: RPI 21, DRH 7). The routing-eval README said 14 scenarios; the eval runs 57 RPI scenarios, 9 Data Readiness Hub scenarios and 5 chains, and its chain section now describes the setup's token, the per-key failure and the client chain's route-and-call judgment. The tool counts (RPI 197 = 44 of 49 hand-written + 153 generated; DRH 57 of 93) were already right.
+
+## [7.184]
+
+### Fixed
+
+- **THIRD-PARTY-LICENSES.md lists every installed package version, and the list no longer depends on the install.** The generator read only the one version Bun hoists per package name, so 81 installed package versions (an older or newer major of a package that is installed twice) had no entry, and which version was listed could change between two installs of the same lockfile. It now reads every entry of Bun's package store: 1014 packages (was 930). A test with a two-version fixture store holds it.
+
+## [7.183]
+
+### Fixed
+
+- **THIRD-PARTY-LICENSES.md lists the dependencies this tree installs.** It had not been regenerated after the dependency updates in 7.155 and 7.162 (hono 4.13.13, @hono/node-server 1.19.15, adm-zip 0.6.1, fast-uri 3.1.9, qs 6.16.1, ip-address 10.7.4, js-yaml 3.15.2, brace-expansion 1.1.21, side-channel 1.1.1). A test now runs `bun run licenses --check`, so the file can't go stale silently again.
+
+## [7.182]
+
+### Changed
+
+- **Two ways to sign in: SSO or native RPI credentials.** SSO is redirect-only (OIDC authorization_code + PKCE). The SSO password form is gone from the login page, and so is the server-side password grant behind it (the `keycloak-sso` provider): a username and password posted to it no longer sign anyone in. Native RPI sign-in is unchanged.
+- **The SSO redirect needs this app's redirect URI registered on your Keycloak realm's client** (`<web origin>/api/auth/callback/sso`). Until it is, the identity provider refuses the redirect, and native RPI credentials are the way in.
+
+## [7.181]
+
+### Security
+
+- **A model answer can't make the browser fetch a URL.** A model answer can carry text an attacker planted in data the agent read, so markdown images in chat answers render as their alt text (or `[image]`), never as an `<img>` that would fetch on render; and every page sends a Content-Security-Policy whose `img-src` is the app itself and in-page data only (`'self' data: blob:`), so no other image source loads even if one slips through.
+
+## [7.180]
+
+### Security
+
+- **Request limits, with auth on.** The app server now bounds what one caller can cost it: a per-peer flood ceiling before auth (1200 a minute); per user, 120 requests a minute on every `/api/v1` call, 20 chat turns a minute (the chat route and the AG-UI run stream), 5 open trace streams, and 10 API keys minted an hour. Past a budget the answer is 429 with `Retry-After`. A presented RPI token is validated with RPI under the same bounds the RPI MCP server uses (a 30-second answer cache, single-flight, a per-token failure budget). The limiter, the validation guard and the serve mode are the RPI MCP server's own code, mirrored (a test holds them identical); the request body is capped at 4 MiB. All per-user budgets are off in dev mode (auth off), so the default local run is unchanged.
+
+## [7.179]
+
+### Security
+
+- **Workspace configuration can't be changed with auth on.** Workspaces are shared by every user, and a workspace's config decides where every user's token goes (its MCP URLs) and what the server runs. Creating, updating or deleting a workspace now returns 403 for every authenticated caller (RPI user, OIDC, API key); dev mode (auth off, one local operator) may still write. The web UI never writes them.
+- **A user's data is theirs.** Threads (their messages, runs and AG-UI streams) belong to the identity that created them; any other caller, and a thread fetched under another workspace's id, gets 404. The telemetry trace (which carries each tool call's result) is kept per workspace and user, and `/trace`, its stream and `?clear=1` touch the caller's own events only.
+- **API keys belong to the user who minted them and act as that user.** A key can't mint keys; list and delete show your own keys only; a key scoped to a workspace gets 404 elsewhere; keys expire in 90 days by default (365 at most); the unenforced `permissions` field is refused.
+
+### Upgrade notes
+
+- The owner tables (`thread_owners`, `api_key_owners`) are created at boot. With auth on, threads and trace events created before this release have no owner and are invisible (404) to every user; dev mode still sees them. A boot that can't complete the schema now fails loudly instead of continuing.
+
+## [7.178]
+
+### Security
+
+- **The caller's RPI identity goes to the RPI MCP connection only.** The app server injected the RPI tenant (`clientId`) into every tool call, the DRH server's included (which read it as its own tenant), and forwarded the signed-in user's RPI token to every HTTP MCP connection. Both now go to the `rpi` connection only; the DRH server and user-configured connections get neither and use their own shared client (DRH in its own default tenant).
+
+## [7.177]
+
+### Fixed
+
+- **A signed-in user's MCP sessions end with each turn.** For a signed-in user the app server opens a fresh MCP client per request (carrying the user's token), but it never closed it: each session stayed open on the RPI MCP server until its 30-minute idle expiry, and that server caps each user's open sessions (20 in token mode), so a busy user was refused after about 20 turns in half an hour. The turn now releases its clients when it ends (chat, the workspace tools listing and runtime probe, A2A), and closing a client ends its session on the server (MCP `DELETE` with the session id, best effort and bounded). The shared, signed-out path is unchanged.
+
+## [7.176]
+
+### Security
+
+- **The app server's CORS admits the web UI's origin only, never `*`.** It was `cors()` (every origin). Now only `http://localhost:3001` and the origin of `RPI_AI_AGENT_REDIRECT_URL` (the web app's public origin) get `Access-Control-Allow-Origin`; any other origin gets none, so a page on another site can't read this server's responses. The web UI calls the server through its own same-origin `/api/proxy/*` routes, which CORS doesn't govern. A third-party page that read the API cross-origin stops working.
+
+## [7.175]
+
+### Changed (breaking for A2A)
+
+- **A2A declares its auth mode explicitly: `A2A_AUTH_MODE` is required (`bearer` or `oidc`), with no default and no fallback.** A deployment that set only `A2A_ENABLED` and `A2A_BEARER_TOKEN` must add `A2A_AUTH_MODE=bearer` after upgrading: with no mode (or an unknown one) the A2A server does not start; the app keeps running and logs the reason to stderr. It never starts open.
+
+### Added
+
+- **A2A per-user sign-in (`A2A_AUTH_MODE=oidc`).** Each caller's token is verified before the JSON-RPC handler runs, the same two-step way the RPI MCP server does it: locally as a JWT from the RPI realm's OpenID provider (discovered from RPI's login settings at boot), else by RPI itself (`validate-token-status`, then the caller's identity). Service accounts and the configured proxy user (`RPI_PROXY_USER`) are refused. The agent's tools then run as that caller: their token is forwarded to the MCP servers. `oidc` requires every MCP server of the A2A workspace to refuse unauthenticated calls (for the RPI MCP server, `AUTH_REQUIRED=true`); the A2A server checks this at boot and does not start otherwise. The agent card advertises the mode. `bearer` keeps today's single shared token.
+
+## [7.174]
+
+### Added
+
+- **The app server has its own copy of the RPI MCP server's OIDC discovery and JWKS verifier** (`apps/server/src/auth/oidc-discovery.ts`), for A2A's per-user sign-in (next release). The MCP server is a standalone binary with no shared package, so the two files are mirrors: a test fails unless they are identical apart from imports and the app server copy's header line.
+
+## [7.173]
+
+### Changed
+
+- **The source cites no internal work-item numbers, nicknames or names.** Comments, scenario notes and test fixtures say what they mean in plain words, and one test prompt no longer quotes part of a real tenant's name. A test (`scripts/__tests__/no-work-item-numbers.test.ts`) fails the build on a work-item number anywhere in the tracked tree.
+
+## [7.172]
+
+### Fixed
+
+- **The routing eval's chain scenarios run again.** The chain setup seeded its records with the RPI client and no token, which the client refuses, so every chain failed before any prompt ran. It now uses the service-account token and seeds the client chain from the caller's own tenants (the cluster-wide list is a cluster-admin read); a key whose setup read fails fails only its own chain scenario; the client-by-name chain is judged on its route and its call (reading a client is a cluster-admin read, refused for a non-admin login).
+- **`rpi-clients` names no other skill's tool in its description.** It named `rpi-admin`'s `get_user_client_list`; it now names `rpi-admin`. A test holds that an action or hybrid skill's description names only its own tools, and the skill-body check also catches a tool named without backticks. The skill text moves the routing fingerprint.
+- **The API-key auth test brings its own database**, so it passes on a fresh clone.
+
+## [7.171]
+
+### Changed
+
+- **`rpi-interactions` names the summary's new fields.** The `summarize_interaction_runs` bullet says `testRuns` and `productionRuns` are real run counts, that the top list is ranked by real runs, and to relay `runsPerInteractionNote` as well as `truncationNote`, never presenting a partial summary as complete. The text is identical on the web, orchestrator and OSS lines. It moves the routing fingerprint, so the routing eval is restamped.
+
+## [7.170]
+
+### Fixed
+
+The inline RPI MCP server (`packages/mcp-rpi`) is 7.227, the standalone RPI MCP server's 7.227 change.
+
+- **`summarize_interaction_runs` returns real run counts, one row per interaction.** RPI ignores `pageNumber` on `POST /client/files/reports/interaction`: every page number returns page 1 with the same rows. The tool paged until `currentPage` reached `totalNumberOfPages`, which never happened, so it re-fetched page 1 until its 50-page or 20-second limit: every interaction appeared many times with a run count of 1, `totalRuns` was that row count times the pages fetched (it varied from call to call), and a false "summary is incomplete" note was attached. A report row's `executedWorkflowCount` is also not a run count (one row said 1 for an interaction that ran 216 times). Now:
+  - the interactions come from **one** report request at the 255-row maximum, never paged; `truncated` is true only when that response says there is more than one page (`truncationNote` then says the interaction figures are partial);
+  - `totalRuns`, and the new `testRuns` and `productionRuns`, come from RPI's run counts (`POST /client/files/reports/interaction/run-counts`, one tenant-wide call);
+  - rows are grouped per interaction by `file.versionControlID` (every version of the interaction; `file.id` names one version and misses the runs of the others), and `activeInteractions`, `testInteractions` and `productionInteractions` count interactions, not rows;
+  - `runsPerInteraction` (top 10) is ranked by each interaction's real run count: run counts are requested for up to the 25 most recently active interactions, five at a time within 3.5 seconds. When not every interaction could be counted, `runsPerInteractionNote` says the ranking is partial.
+
+  The tool declares both endpoints in `_meta.endpoints`. Measured on a live tenant: 0.85–2.2 s per call (the 16–25 run-count calls take 0.27–0.74 s); totals equal `get_interaction_run_counts` for the same window.
+
+## [7.169]
+
+### Fixed
+
+- **A health, single-customer-view, users-and-permissions, operations or cluster-user question always reaches the tool it needs.** Five small skills split their tools into operations, and each operation held only its own group: under `availability`, `rpi-health` had no monitoring overview; under `get` or `list`, `rpi-single-customer-view` had no named attribute group, and under `event-details` no view list; under `users`, `rpi-users-permissions` had no user's permissions, and under `permissions` no user list; under `logs`, `rpi-operations` had no execution services, and under `jobs` no audit history; under one of `internal-users` / `external-users`, `rpi-cluster-users` had no list of the other kind. When the router passed such an operation, the sub-agent could not reach the tool. Each of these skills (2 to 8 tools) now declares no operations, so the sub-agent always gets its whole menu, as `rpi-decision-rules` already does. The skills' text moves the routing fingerprint, so the routing eval is restamped. Unit tests pin each skill's full tool list by name and that it declares no operations.
+
+## [7.168]
+
+### Fixed
+
+- **A decision-rule question always reaches the tool it needs.** `rpi-decision-rules` declared three operations (`rules`, `related`, `criteria`). The router sometimes sent "list the adaptors for my web decision rules" or "list the dynamic content files for my orchestration decision rules" as `rules`, which held only the five by-type getters, so the sub-agent had no list tool and answered without one (seen in the routing eval). The skill now declares no operations: its ten tools are one small menu and the sub-agent always gets all of them. This is the orchestrator line's fix (2.4), ported. The skill's text moves the routing fingerprint, so the routing eval is restamped. A unit test pins that the skill declares no operations.
+
+## [7.167]
+
+### Fixed
+
+- **"Which clients can I access?" is answered under the diagnostics operation too.** The router sometimes sends the question to `rpi-admin` as `diagnostics` (seen in the routing eval). That menu held only the cluster error log, the cluster audit history and the connection check, so the sub-agent checked the connection and answered without the list. `get_user_client_list` is now in `diagnostics` as well as `identity` and `auth`. The router prompt is unchanged; the skill's text moves the routing fingerprint, so the routing eval is restamped. A unit test pins the `diagnostics` menu, and the three diagnostics scenarios (cluster errors, cluster audit history, connection check) now fail if they call the client list.
+
+## [7.166]
+
+### Fixed
+
+- **A sub-agent that sends the same call several times at once keeps its tools for the next step.** The repeated-call guard (7.340) stopped offering tools once it had short-circuited two calls. A model can send the same call many times in parallel in one step (10 `get_interaction_by_id` calls were seen): two ran, eight were short-circuited, and the next step lost its tools before the model had seen a stop message, so a last-run question was answered without the counts. The guard now counts the steps in which it short-circuited a call: after one such step the sub-agent keeps its tools, with the stop messages in view; repeating the call in a second step ends the loop as before. Router-facing source (`router.ts`): the routing eval is restamped.
+
+## [7.165]
+
+### Fixed
+
+- **An interaction's detail is read under the runs operation too.** "List my interactions, then show me the details of X and its last run's counts" is split into dispatches that are all routed to `rpi-interactions` as `runs`. The detail dispatch reads the interaction with `get_interaction_by_id`, which was only in `get`: the sub-agent asked for a tool it didn't have (up to 10 times in one step) and answered without the detail. `get_interaction_by_id` is now in `runs` as well. The router prompt is unchanged; the skill's text moves the routing fingerprint, so the routing eval is restamped. A unit test pins the `runs` menu.
+
+## [7.164]
+
+### Fixed
+
+- **A sub-agent that uses its whole step budget still answers.** When a dispatch's last allowed step was a tool call, the call ran, the budget ended the loop, and the sub-agent returned empty text. That last step (step `maxSteps`, the last one the budget allows) may now not call tools (`toolChoice: "none"`), so every dispatch ends on a text answer from what it gathered. A skill with a budget of 1 keeps its tools. Router-facing source (`router.ts`): the routing eval is restamped.
+
+## [7.163]
+
+### Fixed
+
+- **A sub-agent that keeps repeating a blocked tool call answers instead of using up its steps.** The repeated-call guard stops the 3rd identical call (same tool, same arguments) from running and tells the sub-agent to answer, but the model could keep asking for it until the dispatch hit its step budget. The guard now counts each call it stops; after the second one, the sub-agent's next step may not call tools (`toolChoice: "none"`, tool definitions kept) and answers from the results it already has. Calls with different arguments, and a single repeat, are unaffected. Router-facing source (`router.ts`): the routing eval is restamped.
+
+## [7.162]
+
+### Changed
+
+- **The RPI and DRH MCP servers report the versions their code is: 7.226 and 7.215** (they said 7.224 and 7.213). The changes in those versions are dependency updates, which reached these packages in 7.155: zod 4.6.6, body-parser 2.4.0, hono 4.13.13 and the MCP SDK's runtime dependencies at their fixed releases. The tools are unchanged.
+- `docs/rpi-mcp-server.md`'s Tool Filtering section: an unfiltered `tools/list` returns all 197 tools (it said 47).
+
+### Security
+
+- **adm-zip 0.6.1** (was 0.5.16), which writes the binary release zips and the docker bundle: the advisories below 0.6.0.
+
+## [7.161]
+
+### Changed
+
+- **The docs give the tool counts the servers actually list.** The RPI MCP server lists 197 tools: 44 of its 49 hand-written tools (5 writes are gated) plus 153 read tools generated from the RPI OpenAPI spec; the 44 include the two allowed selection-rule runs (`run_selection_rule_count`, `run_selection_rule_waterfall`), so they aren't "197 read tools". The DRH MCP server lists 57 of its 93 (36 writes gated). README, `docs/architecture.md`, `docs/rpi-mcp-server.md`, `docs/faq.md` (its interactions row is 18 tools, with `summarize_interaction_runs` and `get_interaction_run_counts`), `docs/getting-started.md` and `docs/skills.md` said 47, "42 of 47" or "197 read tools".
+
+### Added
+
+- **`docs/drh-mcp-server.md`**, the Data Readiness Hub MCP server's page next to `docs/rpi-mcp-server.md`: its tool domains, configuration, authentication and limits, and how to build the binaries. Linked from the README and `docs/getting-started.md`.
+
+## [7.160]
+
+### Fixed
+
+- **A saved RPI dashboard asked for by id or name is read, not rendered or answered in text.** "Get the dashboard with id …" is a read of a saved dashboard (`rpi-analysis`, operation `dashboards`). The dashboard steering told the router to call `render_view_dashboard` for any dashboard request, so it sometimes answered in text without dispatching or rendered a view instead. The steering and `render_view_dashboard`'s description now send a saved dashboard or widget asked for by id or name to `rpi-analysis`. Building a dashboard from data is unchanged. Router-facing text: the routing eval is restamped.
+
+## [7.159]
+
+### Fixed
+
+- **A last run's result counts are read, not paged for.** "What were the result counts from the last run of my …?" is routed to `rpi-interactions` as `runs`, whose menu held only the all-interactions date-range summary and the interaction list. The skill reads a last run with `get_interaction_by_name` then `get_interaction_workflow_instances`, and neither was in `runs`: the sub-agent paged the interaction list 3 to 10 times and the router sometimes dispatched again. Both are now in `runs` too. The router prompt is unchanged.
+
+### Added
+
+- **Chain scenario `chain-interaction-last-run-counts`:** a real interaction's last-run counts, judged on the route and the name lookup. A unit test pins the `runs` menu.
+
+## [7.158]
+
+### Fixed
+
+- **"Which clients can I access?" lists them whichever operation it is routed to.** `rpi-admin` narrows the sub-agent's tools by operation, and the question was sometimes routed as `auth` (about 1 run in 5), whose menu had no client list, so the reply was the login settings. `get_user_client_list` is now in `auth` as well as `identity`. The router prompt is unchanged.
+
+### Added
+
+- **Routing scenario `admin-token-status`:** a token-validity check still calls `validate_token_status`, not the client list. A unit test pins the `identity` and `auth` menus.
+
+## [7.157]
+
+### Fixed
+
+- **"Is my system healthy?" gets the availability check whichever operation it is routed to.** `rpi-health` narrows the sub-agent's tools by operation, and the question was sometimes routed as `overview` (about 1 run in 5), whose menu held only the monitoring overview. The availability getter (`get_system_health_availability`) is now in `overview` as well, and the skill says which to pick: up / healthy / any alerts → availability; the monitoring overview only when it is asked for. The router prompt is unchanged.
+
+### Added
+
+- **Routing scenario `health-monitoring-overview`:** an explicit monitoring-overview request still calls the overview, and not the availability check. A unit test pins both `rpi-health` menus.
+
+## [7.156]
+
+### Fixed
+
+- **A sub-agent that repeats a tool call is told to stop, instead of the whole request failing.** The repeated-call guard answers a sub-agent's third identical tool call with a stop message instead of running the tool again. It returned that message as plain text, which the MCP tools' result conversion can't read ("result is not an Object"), so each time the guard tripped the skill dispatch failed and the user was told there was a "technical issue". Seen on "the result counts from the last run of my …" and "the workflow status of my …" interaction. The guard now returns the message as an MCP tool result, which the model reads like any other.
+
+## [7.155]
+
+### Security
+
+- **hono 4.13.13 and the MCP SDK's runtime dependencies at their fixed releases, as on the server lines (RPI 7.226, DRH 7.215).** `apps/server`, `packages/mcp-rpi` and `packages/mcp-drh` declare hono 4.13.13 (was 4.12.25), and the root `overrides` add hono 4.13.13, fast-uri 3.1.9, qs 6.16.1, ip-address 10.7.4 and @hono/node-server 1.19.15 beside the zod 4.6.6, body-parser 2.4.0 and proxy-addr 2.0.8 this line already forced. Relocked: `bun audit` goes from 93 advisories (45 high) to 35 (18 high); the rest sit in the web build toolchain (nanoid, PostCSS, Browserslist, adm-zip, js-yaml 3 under gray-matter), which this change doesn't touch.
+- The server lines also force js-yaml 4.3.2 and brace-expansion 2.1.7; this line can't. `packages/skills` reads SKILL.md front-matter through gray-matter, which calls js-yaml 3's `safeLoad` (removed in js-yaml 4: every skill failed to load), and minimatch 3 under eslint expects brace-expansion 1.
+- The inline servers already carried zod 4.6.6, the `z.record` key schemas and the test without a real account name; their code is unchanged.
+
+## [7.154]
+
+### Fixed
+
+- **A workflow run's log, or all of its activity results, is fetched instead of named.** `rpi-workflows` narrows the sub-agent's tools by operation, and the router picks the operation from the words in the request. "Get the run log for workflow-association instance …" was sometimes routed as `instance`, whose menu had no log tool, and "Get all the activity results for workflow run instance …" as `activity`, whose menu had no all-results tool. Either way the sub-agent told the user which tool to use and fetched nothing. The run-log getter (`get_workflow_association_instance_logs`) is now in `instance` as well as `logs`, and the all-results getter (`get_workflow_all_activity_results`) in `activity` as well as `instance`. The skill is the web line's (7.332), byte-identical.
+- The router's catalog lists operation names only, so its text is unchanged: the router prompt is byte-identical before and after.
+
+### Added
+
+- **Two routing scenarios guard the wider menus:** `workflows-instance-all-activity-results` (all of a run's activity results → the all-results getter) and `workflows-instance-summaries` (a run's instance summaries still → `list_workflow_instance_summaries`, not the log tool). `workflows-activity-results` already holds a single-activity request to the single-activity getter. A unit test pins the `activity`, `instance` and `logs` menus.
+
+## [7.153]
+
+### Fixed
+
+- **A Data Readiness Hub database, source or feed asked for by name is the one you get, not an invented one.** With no list tool in the `get` operation, a by-name question made the sub-agent invent an id (from the name's digits) and report the wrong record or "not found"; the subject-area getter was passed the name as its id. `drh-datasources`' `get` now also holds `drh_list_databases` and `drh_list_sources`, and `drh-feeds`' `get` holds `drh_list_feeds`. `drh-datasources`, `drh-feeds` and `drh-data-quality` now say a name is not an id: find it in the list tool's results, fetch by that id, and say it wasn't found if it isn't listed. Unit tests hold both `get` lists and the rule's text and place in each skill.
+
+## [7.152]
+
+### Fixed
+
+- **A Data Readiness Hub database's consolidation rate and summary are reachable from any operation.** `drh-datasources`' `get` operation did not include the summary tools, so a "my default database" question routed to `get` could not read the consolidation rate and answered that it wasn't there. `get` now also holds `drh_get_database_summary`, `drh_get_database_cdp_summary` and `drh_get_database_consolidation_rate`. A unit test holds the list.
+
+## [7.151]
+
+### Fixed
+
+- **Data Readiness Hub hygiene scores and match confidence look back far enough to find the history.** The DRH data-quality tools take `count` as a look-back window in days, not a number of records. The sub-agent sent a small count, so history a few months old came back empty ("no hygiene score history", "no match-confidence data") even when many runs existed. `skills/drh-data-quality/SKILL.md` now says `count` is days and to always pass it: the user's period when they name one, otherwise `count: 3650`. The routing eval now checks the tool call's arguments and rejects answers that claim the data is missing: `drh-op-hygiene-scores` is tightened, and `drh-op-hygiene-history` and `drh-op-match-confidence` are new. A unit test holds the skill's guidance.
+
+## [7.149]
+
+### Fixed
+
+- The RPI and DRH executable zips' `.env.example` shipped `AUTH_REQUIRED=true`, so a server started from it demanded a bearer token and the account in the file was never used. The zips now ship `false` (service-credential mode, as the standalone servers' own templates do); the hosted app's `.env.example` keeps `true`. The value is set per scope in `scripts/env-scopes.ts`, and a test holds both.
+
 ## [7.148]
 
 ### Changed

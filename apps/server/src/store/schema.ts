@@ -20,7 +20,7 @@ export const threads = sqliteTable("threads", {
 });
 
 /**
- * #27828 — per-conversation active RPI tenant (X-ClientID) selection.
+ * Per-conversation active RPI tenant (X-ClientID) selection.
  *
  * A light store, NOT a threads column: the web chat path keys conversations by
  * the AI SDK chat id (a non-UUID string that can't be the uuid `threads.id` in
@@ -91,4 +91,31 @@ export const auditLogs = sqliteTable("audit_logs", {
   details: text("details"), // JSON
   userId: text("user_id"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+/**
+ * Who owns a thread — the authenticated identity that created it (an RPI user
+ * `rpi:<guid>`, an OIDC `sub`, or an API key's owner). Its own table, not a
+ * threads column: the boot schema step is additive (it creates missing TABLES and
+ * never alters existing ones), so an install upgraded in place gains this table
+ * and its existing threads have no owner — invisible to every authenticated
+ * caller (dev mode sees everything). Thread routes are scoped to the owner.
+ */
+export const threadOwners = sqliteTable("thread_owners", {
+  threadId: text("thread_id")
+    .primaryKey()
+    .references(() => threads.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+});
+
+/**
+ * Who owns an API key — the (non-key) identity that minted it; the key acts AS
+ * its owner. Its own table for the same reason as thread_owners. A key with no
+ * owner row (minted before this table) acts as itself (`apikey:<id>`).
+ */
+export const apiKeyOwners = sqliteTable("api_key_owners", {
+  keyId: text("key_id")
+    .primaryKey()
+    .references(() => apiKeys.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
 });

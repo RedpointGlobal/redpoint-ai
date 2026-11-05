@@ -1,5 +1,5 @@
 /**
- * #27957 (Phase 2) — render_view_dashboard (single dispatcher) + the run-counts
+ * Phase 2 — render_view_dashboard (single dispatcher) + the run-counts
  * view. The LLM picks a viewId + params; the server fetches (dataSource) and
  * assembles the spec (templateFn, PURE) and RETURNS it. Tests lock:
  *   - templateFn purity + the data→DashboardSpec mapping (buckets→stacked bar,

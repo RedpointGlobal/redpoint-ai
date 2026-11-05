@@ -18,7 +18,7 @@ import {
  * Lifecycle actions consolidated into boolean-arg tools (paused, enabled).
  */
 const srcBody = z
-  .record(z.unknown())
+  .record(z.string(), z.unknown())
   .describe("Source payload (the OpenAPI Source object).");
 
 export function registerSourceTools(server: McpServer, client: DRHApiClient) {
@@ -177,7 +177,7 @@ export function registerSourceTools(server: McpServer, client: DRHApiClient) {
       description:
         "Check whether a source name is available. POST /sources/check-name-availability.",
       inputSchema: {
-        body: z.record(z.unknown()).describe("Name-availability request payload."),
+        body: z.record(z.string(), z.unknown()).describe("Name-availability request payload."),
         clientId: drhClientIdSchema,
       },
       annotations: READ_ONLY,

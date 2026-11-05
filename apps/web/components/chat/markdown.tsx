@@ -39,6 +39,12 @@ const components: Components = {
       {...props}
     />
   ),
+  // An image in a model answer is NEVER rendered: an <img> would make the browser
+  // fetch its URL on render, carrying whatever the URL encodes to that host. Its alt
+  // text (or "[image]") shows in its place; a link around it stays a link.
+  img: ({ alt }) => (
+    <span className="text-muted-foreground">{alt?.trim() || "[image]"}</span>
+  ),
   blockquote: ({ className, ...props }) => (
     <blockquote
       className={cn("my-2 border-l-2 border-border pl-3 italic", className)}

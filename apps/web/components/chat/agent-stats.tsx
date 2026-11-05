@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * #27897 (P2) — <StatTiles>: renders a schema-validated stat-tile spec as a
+ * P2 — <StatTiles>: renders a schema-validated stat-tile spec as a
  * responsive row of KPI cards. Companion to <AgentChart>; the render_stats tool
  * ARGS are the spec, handed here via makeAssistantToolUI. A dashboard building
  * block — a stat-tile row + one or more chart cards compose a dashboard-like view

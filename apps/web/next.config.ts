@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import path from "path";
 import { existsSync, readFileSync } from "fs";
+import { securityHeaders } from "./lib/csp";
 
 // Load root .env for monorepo — Next.js only reads .env from its own project root (apps/web/).
 const rootEnv = path.resolve(import.meta.dirname, "../../.env");
@@ -23,6 +24,10 @@ if (existsSync(rootEnv)) {
 const nextConfig: NextConfig = {
   output: "standalone",
   turbopack: {},
+  // The CSP on every route (lib/csp.ts): images from the app and in-page data only.
+  async headers() {
+    return securityHeaders;
+  },
   // No image optimizer: the app uses no next/image, and /_next/image would fetch any
   // same-origin path and decode whatever bytes come back. Off, the route is a 404.
   images: { unoptimized: true },

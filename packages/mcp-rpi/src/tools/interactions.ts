@@ -13,8 +13,10 @@ import { pollUntilTerminal } from "../client/polling.js";
 import { mapResultsToCards } from "./response-shapes.js";
 import {
   withRetryOn429,
-  collectReportPages,
-  summarizeInteractionReports,
+  fetchInteractionReport,
+  dedupeInteractions,
+  countRunsPerInteraction,
+  summarizeInteractionRuns,
   fetchRunCounts,
   type RunCountsRequest,
   type RunCountsResults,
@@ -22,8 +24,15 @@ import {
   type RunCountExecutionMode,
 } from "./run-summary.js";
 
-// Smaller reports page — cheap insurance against a huge single-page payload.
-const REPORT_PAGE_SIZE = 50;
+// The reports page size: the schema's maximum. RPI ignores pageNumber on
+// reports/interaction, so the summary makes ONE request and it must be the largest.
+const REPORT_PAGE_SIZE = 255;
+// summarize_interaction_runs ranking: run counts are requested for at most this many
+// interactions (most recently active first), CONCURRENCY at a time, within BUDGET_MS.
+const RANK_CANDIDATES = 25;
+const RANK_CONCURRENCY = 5;
+const RANK_BUDGET_MS = 3_500;
+const RANK_CALL_TIMEOUT_MS = 3_000;
 // HARD per-call timeout: no single RPI fetch can stall the tool past this. It
 // defends the (good) reports/interaction endpoint against a pathologically
 // large single-page payload — on abort the collector degrades to a partial
@@ -216,8 +225,8 @@ export function registerInteractionTools(
   // NOTE: the raw list_interaction_runs tool was REMOVED — dumping raw
   // runs via the super-linear workflow-instances endpoint (probe: 10 rows ~13s,
   // 25 ~20s, 255 → >120s timeout) is unusable. The sole run-data tool is
-  // summarize_interaction_runs: 'summary' (default) is built from the fast,
-  // complete reports/interaction endpoint; 'daily' grinds workflow-instances at
+  // summarize_interaction_runs: 'summary' (default) is built from one
+  // reports/interaction request + the run-counts endpoint; 'daily' grinds workflow-instances at
   // PS=10 in small date-chunks ONLY for an explicit per-day trend (slow, ~1 month
   // cap, bounded + partial-on-budget).
   // =========================================================================
@@ -225,10 +234,12 @@ export function registerInteractionTools(
   registerTool(
     "summarize_interaction_runs",
     {
-      _meta: { endpoints: ["/client/files/reports/interaction"] },
+      _meta: {
+        endpoints: ["/client/files/reports/interaction", "/client/files/reports/interaction/run-counts"],
+      },
       title: "Summarize Interaction Runs",
       description:
-        "Aggregate interactions over a date range SERVER-SIDE — returns COMPUTED figures, not a raw list, complete and never invents numbers. `fromDate` and `toDate` are REQUIRED. Fast (~1-2s), built purely from the reports/interaction endpoint: returns totalRuns, activeInteractions, testInteractions + productionInteractions (INTERACTION counts by environment — for a Test-vs-Production doughnut), and runsPerInteraction (top-10 interactions by run count {name, runs, type} — for a horizontal bar). Use for a per-INTERACTION breakdown (which interactions ran most, test vs production). For counts-over-TIME (per day/week/month) use get_interaction_run_counts instead. If `truncated` is true relay `truncationNote` (figures are partial). Read-only.",
+        "Aggregate interactions over a date range SERVER-SIDE — returns COMPUTED figures, not a raw list, and never invents numbers. `fromDate` and `toDate` are REQUIRED. Fast (~1-3s): returns totalRuns + testRuns + productionRuns (RUN counts from RPI's run counts), activeInteractions, testInteractions + productionInteractions (INTERACTION counts by environment — for a Test-vs-Production doughnut), and runsPerInteraction (top-10 interactions by run count {name, runs, type} — for a horizontal bar). Use for a per-INTERACTION breakdown (which interactions ran most, test vs production). For counts-over-TIME (per day/week/month) use get_interaction_run_counts instead. If `runsPerInteractionNote` is present relay it (the ranking is partial). If `truncated` is true relay `truncationNote` (interaction figures are partial). Read-only.",
       inputSchema: {
         fromDate: z
           .string()
@@ -251,49 +262,86 @@ export function registerInteractionTools(
       const userToken = extra.authInfo?.token;
       const baseUrl = targetUrlOf(extra);
       try {
-        // The fast reports path, built PURELY from reports/interaction: complete,
-        // server-computed, ~1-2s, and cannot hang. (Counts-over-TIME are the
-        // separate get_interaction_run_counts tool — RPI's server-side GROUP BY.)
-        // executionOption doesn't split test/prod (association isTest does, per the
-        // probe) — pick either; "Production" is arbitrary. returnWorkflowInfos:false
-        // still returns the workflowAssociations (with isTest) we classify on.
-        const reportPage = (pageNumber: number) =>
+        // Interactions: ONE reports/interaction request (RPI ignores pageNumber, so
+        // never page). Runs: run-counts — one tenant-wide call for the totals, then
+        // one call per interaction (by versionControlID) for the ranking, bounded.
+        // executionOption doesn't split test/prod (association isTest does) — pick
+        // either; "Production" is arbitrary. returnWorkflowInfos:false still returns
+        // the workflowAssociations (with isTest) we classify on.
+        const backoffLog = (what: string) => ({
+          onRetry: ({ attempt, waitMs, retryAfterMs }: { attempt: number; waitMs: number; retryAfterMs?: number }) =>
+            console.error(
+              `[summarize_interaction_runs] ${what} 429 backoff attempt=${attempt} ` +
+                `retryAfterMs=${retryAfterMs ?? "none"} sleepMs=${waitMs}`,
+            ),
+        });
+        const runCounts = (timeoutMs: number, interactionID?: string, capMs?: number) =>
           withRetryOn429(
             () =>
-              withCallTimeout(PER_CALL_TIMEOUT_MS, (signal) =>
-                rpiClient.post<ReportSearchResults>(
-                  userToken,
-                  "/client/files/reports/interaction",
-                  {
-                    pageNumber,
-                    pageSize: REPORT_PAGE_SIZE,
-                    includeDeletedFiles: false,
-                    includeUnexecutedInteractions: false,
-                    applyFolderPermissions: false,
-                    returnWorkflowInfos: false,
-                    fromActivityDate: fromDate,
-                    toActivityDate: toDate,
-                    status: "AllStatuses",
-                    dateFilterOption: "LastActivityEventDate",
-                    executionOption: "Production",
-                  },
-                  { clientId, baseUrl, signal },
+              withCallTimeout(timeoutMs, (signal) =>
+                fetchRunCounts(
+                  (body) =>
+                    rpiClient.post<RunCountsResults>(
+                      userToken,
+                      "/client/files/reports/interaction/run-counts",
+                      body,
+                      { clientId, baseUrl, signal },
+                    ),
+                  { fromDate, toDate, granularity: "Month", ...(interactionID ? { interactionID } : {}) },
                 ),
               ),
-            {
-              onRetry: ({ attempt, waitMs, retryAfterMs }) =>
-                console.error(
-                  `[summarize_interaction_runs] reports 429 backoff attempt=${attempt} ` +
-                    `retryAfterMs=${retryAfterMs ?? "none"} sleepMs=${waitMs} page=${pageNumber}`,
-                ),
-            },
+            { ...(capMs ? { capMs } : {}), ...backoffLog(interactionID ? "run-counts(interaction)" : "run-counts") },
           );
-
-        // Paginate reports (bounded: page-cap + wall-clock budget + per-call
-        // timeout) → aggregate the interaction dashboard. truncated only if the
-        // reports pagination itself is bounded out (very dense tenant).
-        const { rows, truncated } = await collectReportPages(reportPage, { budgetMs: 20_000 });
-        const summary = summarizeInteractionReports(rows, { fromDate, toDate, truncated });
+        const [report, runTotals] = await Promise.all([
+          fetchInteractionReport(() =>
+            withRetryOn429(
+              () =>
+                withCallTimeout(PER_CALL_TIMEOUT_MS, (signal) =>
+                  rpiClient.post<ReportSearchResults>(
+                    userToken,
+                    "/client/files/reports/interaction",
+                    {
+                      pageNumber: 1,
+                      pageSize: REPORT_PAGE_SIZE,
+                      includeDeletedFiles: false,
+                      includeUnexecutedInteractions: false,
+                      applyFolderPermissions: false,
+                      returnWorkflowInfos: false,
+                      fromActivityDate: fromDate,
+                      toActivityDate: toDate,
+                      status: "AllStatuses",
+                      dateFilterOption: "LastActivityEventDate",
+                      executionOption: "Production",
+                    },
+                    { clientId, baseUrl, signal },
+                  ),
+                ),
+              backoffLog("report"),
+            ),
+          ),
+          runCounts(PER_CALL_TIMEOUT_MS),
+        ]);
+        const interactions = dedupeInteractions(report.rows);
+        const candidates = interactions.slice(0, RANK_CANDIDATES).map((i) => i.key);
+        const started = Date.now();
+        const perInteraction = await countRunsPerInteraction(
+          candidates,
+          async (key) => (await runCounts(RANK_CALL_TIMEOUT_MS, key, 1_000)).totalRuns ?? 0,
+          { concurrency: RANK_CONCURRENCY, budgetMs: RANK_BUDGET_MS },
+        );
+        console.error(
+          `[summarize_interaction_runs] ranked ${perInteraction.counts.size}/${candidates.length} of ` +
+            `${interactions.length} interactions in ${Date.now() - started}ms complete=${perInteraction.complete}`,
+        );
+        const summary = summarizeInteractionRuns({
+          fromDate,
+          toDate,
+          runTotals,
+          interactions,
+          candidates,
+          perInteraction,
+          reportTruncated: report.truncated,
+        });
         return jsonContent(summary);
       } catch (error) {
         return errorContent("Error summarizing interaction runs", error);

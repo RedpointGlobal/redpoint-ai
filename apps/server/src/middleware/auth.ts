@@ -2,14 +2,21 @@ import { createMiddleware } from "hono/factory";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { isAllowedRpiUrl } from "@redpoint-ai/shared";
 import { db } from "../store/db.js";
-import { apiKeys } from "../store/schema.js";
+import { apiKeys, apiKeyOwners } from "../store/schema.js";
+import { createHash } from "crypto";
+import { checkRpiToken } from "../auth/rpi-token-check.js";
+import { ValidationGuard } from "../lib/validation-guard.js";
+import { tooManyRequests } from "../lib/rate-limit.js";
 import { eq } from "drizzle-orm";
 
 export interface AuthUser {
+  /** The identity data is scoped to — for an API key, its OWNER (the key acts as them). */
   id: string;
   type: "apikey" | "oidc" | "rpi-user";
+  /** API key only: the key's own id. */
+  keyId?: string;
+  /** API key only: the one workspace the key may reach (others 404), when set. */
   workspaceId?: string;
-  permissions?: string[];
 }
 
 declare module "hono" {
@@ -58,22 +65,6 @@ function getJWKS() {
 // `validate-token-status` — the SAME universal-fallback mechanism the mcp-rpi
 // middleware already uses. Cached briefly (mirrors mcp-rpi) so a polled endpoint
 // like runtime-status doesn't hit RPI on every request.
-/**
- * RPI's empty/default GUID (its documented "no value" sentinel for a guid field).
- * A validate-token-status response carrying this as `id` has resolved NO real
- * principal, so we treat it as unresolved rather than attribute usage to it.
- */
-const EMPTY_GUID = "00000000-0000-0000-0000-000000000000";
-
-const RPI_TOKEN_CACHE_TTL_MS = 30_000;
-// Cache the RESOLVED STABLE ID (or null) per token, not a bare boolean: the id is
-// what makes per-user metering converge, and it comes from the SAME
-// validate-token-status call, so caching it costs no extra round-trip.
-const rpiTokenCache = new Map<
-  string,
-  { stableId: string | null; expiresAt: number }
->();
-
 /** RPI Integration API base (no /api/v2 suffix), or null if unconfigured. */
 function rpiBaseUrl(): string | null {
   const raw = process.env.RPI_INTEGRATION_API_URL;
@@ -81,56 +72,38 @@ function rpiBaseUrl(): string | null {
   return raw.replace(/\/api\/v2\/?$/, "").replace(/\/$/, "");
 }
 
+const normaliseBase = (base: string) => base.replace(/\/api\/v2\/?$/, "").replace(/\/$/, "");
+
+/**
+ * The budgets a NEW RPI token validation must pass (../lib/validation-guard.ts, the
+ * RPI MCP server's): the failure budget keyed per TOKEN (behind the web
+ * proxy every browser request shares one address — an address budget would let
+ * one user's failures lock out everyone), and MAX_REMOTE_VALIDATIONS for the whole
+ * server, the real ceiling on what RPI can be asked.
+ */
+export const rpiValidationGuard = new ValidationGuard(Date.now, (c) => {
+  const token = c.req.header("X-RPI-Token") ?? "";
+  return `token:${createHash("sha256").update(token).digest("hex")}`;
+});
+
 /**
  * Validate an RPI user token and resolve the caller's STABLE per-user identity.
  *
  * Returns the RPI/Keycloak user GUID (lowercased) from validate-token-status'
- * top-level `id` — an identity that is the SAME across token refreshes and
- * re-logins. Keying the principal on it lets per-user usage aggregate instead of
- * fragmenting: the previous token-hash id changed every time apps/web refreshed
- * or re-minted the rpiAccessToken (~hourly), splitting one user across many ids.
- *
- * Returns null (→ caller fails closed) when RPI is unconfigured, the token is
- * invalid/expired, RPI is unreachable, or a valid token yields no usable id.
- * It NEVER falls back to a token hash: that hash rotates with the token and is
- * exactly the fragmentation this removes, so a validated-but-unattributable token
- * is an auth failure, not a silently mis-keyed principal.
+ * top-level `id` — the SAME across token refreshes and re-logins, so per-user usage
+ * aggregates instead of fragmenting. Returns null (→ the caller fails closed) when
+ * RPI is unconfigured, the token is invalid/expired, RPI is unreachable, or a valid
+ * token yields no usable id. It NEVER falls back to a token hash. Cached, capped,
+ * single-flight (../auth/rpi-token-check.ts); no budget here (the A2A path).
  */
-async function validateRpiToken(
+export async function validateRpiToken(
   token: string,
-  // Per-request Environment Location (validated X-RPI-URL). Validate the token
-  // against the rep's instance, not the boot default. Normalised + cache-keyed
-  // by base so the same token isn't conflated across instances.
   targetBase?: string,
 ): Promise<string | null> {
-  const base = targetBase
-    ? targetBase.replace(/\/api\/v2\/?$/, "").replace(/\/$/, "")
-    : rpiBaseUrl();
+  const base = targetBase ? normaliseBase(targetBase) : rpiBaseUrl();
   if (!base) return null;
-  const keyHash = `${base}::${await hashApiKey(token)}`;
-  const cached = rpiTokenCache.get(keyHash);
-  if (cached && Date.now() < cached.expiresAt) return cached.stableId;
-  let stableId: string | null = null;
-  try {
-    const res = await fetch(
-      `${base}/api/v2/authentication/validate-token-status`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-    if (res.ok) {
-      // GUIDs are case-insensitive — normalise so a casing flip can't re-split
-      // the same identity. Ignore the empty-guid sentinel.
-      const body = (await res.json()) as { id?: string | null };
-      const raw = body?.id?.trim().toLowerCase();
-      if (raw && raw !== EMPTY_GUID) stableId = raw;
-    }
-  } catch {
-    stableId = null;
-  }
-  rpiTokenCache.set(keyHash, {
-    stableId,
-    expiresAt: Date.now() + RPI_TOKEN_CACHE_TTL_MS,
-  });
-  return stableId;
+  const check = await checkRpiToken(token, base);
+  return check.result === "valid" ? check.stableId : null;
 }
 
 /**
@@ -169,10 +142,23 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     // refresh/re-login, so a token-hash id fragments one user's usage across
     // many ids and breaks per-user metering. A validated token that resolves no
     // stable id falls through (→ early-401), never a token hash.
-    const stableId = await validateRpiToken(rpiToken, rpiUrl);
-    if (stableId) {
-      c.set("user", { id: `rpi:${stableId}`, type: "rpi-user" });
-      return next();
+    // A NEW validation passes the budgets first (a cached or in-flight answer is
+    // free); over them → 429 without calling RPI.
+    const base = rpiUrl ? normaliseBase(rpiUrl) : rpiBaseUrl();
+    if (base) {
+      let askedRpi = false;
+      const check = await checkRpiToken(rpiToken, base, () => {
+        const admission = rpiValidationGuard.admit(c);
+        askedRpi = admission.ok;
+        return admission;
+      });
+      if (check.result === "refused") return tooManyRequests(c, check.retryAfterSec);
+      if (check.result === "valid") {
+        c.set("user", { id: `rpi:${check.stableId}`, type: "rpi-user" });
+        return next();
+      }
+      // A rejected token counts against its budget; RPI unreachable is not the caller's failure.
+      if (check.result === "invalid" && !askedRpi) rpiValidationGuard.failed(c);
     }
   }
   // Invalid/absent/unresolvable X-RPI-Token falls through: an app-identity
@@ -201,19 +187,27 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       return c.json({ error: "API key expired" }, 401);
     }
 
+    // A workspace-scoped key reaches its workspace only: any other workspace's
+    // routes answer the same 404 an unknown id does.
+    if (keyRecord.workspaceId) {
+      const m = c.req.path.match(/^\/api\/v1\/workspaces\/([^/]+)/);
+      if (m && m[1] !== keyRecord.workspaceId) return c.json({ error: "Not found" }, 404);
+    }
+
     // Update last used timestamp (fire and forget)
     db.update(apiKeys)
       .set({ lastUsedAt: new Date() })
       .where(eq(apiKeys.id, keyRecord.id))
       .run();
 
+    // The key acts AS its owner (the identity that minted it) for data scoping; a
+    // key minted before owners were recorded acts as itself.
+    const [owner] = await db.select().from(apiKeyOwners).where(eq(apiKeyOwners.keyId, keyRecord.id));
     c.set("user", {
-      id: keyRecord.id,
+      id: owner?.userId ?? `apikey:${keyRecord.id}`,
       type: "apikey",
+      keyId: keyRecord.id,
       workspaceId: keyRecord.workspaceId ?? undefined,
-      permissions: keyRecord.permissions
-        ? JSON.parse(keyRecord.permissions)
-        : undefined,
     });
     return next();
   }

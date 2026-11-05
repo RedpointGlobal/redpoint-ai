@@ -91,7 +91,7 @@ User: "List my audiences"
 
 If a workspace has only expert skills, no `execute_skill` tool is added at all -- the knowledge is already in the prompt.
 
-**Why?** Without the router, exposing all 47 MCP tools costs ~15k tokens per request. The skill catalog reduces this to ~500 tokens while maintaining full tool access through sub-agents. Inlining expert knowledge eliminates unnecessary tool-call round trips for knowledge questions.
+**Why?** Without the router, every request would carry the full tool surface (the RPI MCP server alone lists 197 tools). The skill catalog reduces this to ~500 tokens while maintaining full tool access through sub-agents. Inlining expert knowledge eliminates unnecessary tool-call round trips for knowledge questions.
 
 ## Expert roster & current wiring
 

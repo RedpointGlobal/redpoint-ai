@@ -45,7 +45,6 @@ if (process.env.AUTH_REQUIRED !== "false") {
 }
 
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { healthRoutes } from "./routes/health.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
@@ -57,20 +56,36 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { aguiRoutes } from "./routes/agui.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { seedDefaults } from "./store/seed.js";
+import { appCors } from "./cors.js";
+import { RateLimiter, peerFloodLimit } from "./lib/rate-limit.js";
+import { turnLimit, userRequestLimit } from "./lib/web-limits.js";
+import { SERVE_MODE } from "./lib/serve-mode.js";
 
 await seedDefaults();
 
 const app = new Hono();
 
-app.use("*", cors());
+// CORS: the web UI's origin only (./cors.ts) — never "*".
+app.use("*", appCors());
 app.use("*", logger());
 
 // Public routes (no auth required)
 app.route("/api/v1", healthRoutes);
 app.route("/metrics", metricsRoutes);
 
+// The per-peer flood ceiling, before auth (../lib/rate-limit.ts — the RPI MCP
+// server's). Behind the web proxy every browser request comes from one address, so
+// it is a loose server-wide backstop; the budgets that separate users come after auth.
+const limiter = new RateLimiter();
+app.use("/api/v1/*", peerFloodLimit(limiter));
+
 // Protected routes
 app.use("/api/v1/*", authMiddleware);
+// After auth: each caller's request budget; a chat turn (the chat route, the AG-UI
+// stream) also spends the caller's turn budget (lib/web-limits.ts; off in dev mode).
+app.use("/api/v1/*", userRequestLimit(limiter));
+app.on("POST", "/api/v1/workspaces/:workspaceId/chat", turnLimit());
+app.on("POST", "/api/v1/workspaces/:workspaceId/threads/:threadId/runs/:runId/stream", turnLimit());
 app.route("/api/v1/workspaces", workspaceRoutes);
 app.route("/api/v1/workspaces/:workspaceId/threads", threadRoutes);
 app.route("/api/v1/workspaces", chatRoutes);
@@ -84,11 +99,29 @@ app.get("/", (c) => c.redirect("/api/v1/health"));
 // Dynamic import keeps Express and @a2a-js/sdk out of the runtime when disabled.
 if (process.env.A2A_ENABLED === "true") {
   const workspaceId = process.env.A2A_WORKSPACE_ID;
-  const bearerToken = process.env.A2A_BEARER_TOKEN;
-  if (!workspaceId || !bearerToken) {
+  // Auth mode is explicit (A2A_AUTH_MODE oidc|bearer) — no default, no fallback.
+  const { prepareA2AAuth, checkPerUserMcp } = await import("./a2a/auth.js");
+  const prepared = await prepareA2AAuth(process.env);
+  // oidc forwards each caller's token, so every MCP of the A2A workspace must
+  // enforce per-user auth (checkPerUserMcp); otherwise the A2A server is not started.
+  let perUser: { ok: true } | { error: string } = { ok: true };
+  const checkA2AWorkspaceMcp = async (id: string) => {
+    const { db } = await import("./store/db.js");
+    const { workspaces } = await import("./store/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, id));
+    if (!ws) return { error: `A2A workspace "${id}" not found` };
+    const config = JSON.parse(ws.config) as { mcp?: Array<{ name: string; transport: string; url?: string }> };
+    return checkPerUserMcp(config.mcp ?? []);
+  };
+  if (!workspaceId) {
     process.stderr.write(
-      "[a2a] A2A_ENABLED=true but A2A_WORKSPACE_ID or A2A_BEARER_TOKEN is not set — A2A server not started\n",
+      "[a2a] A2A_ENABLED=true but A2A_WORKSPACE_ID is not set — A2A server not started\n",
     );
+  } else if ("error" in prepared) {
+    process.stderr.write(`[a2a] ${prepared.error} — A2A server not started\n`);
+  } else if (prepared.auth.mode === "oidc" && "error" in (perUser = await checkA2AWorkspaceMcp(workspaceId))) {
+    process.stderr.write(`[a2a] ${perUser.error} — A2A server not started\n`);
   } else {
     try {
       const { startA2AServer } = await import("./a2a/index.js");
@@ -100,11 +133,11 @@ if (process.env.A2A_ENABLED === "true") {
       const a2a = await startA2AServer({
         skillRegistry,
         workspaceId,
-        bearerToken,
+        auth: prepared.auth,
         port,
       });
       process.stderr.write(
-        `[a2a] server listening on http://localhost:${a2a.port}\n`,
+        `[a2a] server listening on http://localhost:${a2a.port} (auth: ${prepared.auth.mode})\n`,
       );
     } catch (error) {
       process.stderr.write(
@@ -143,8 +176,14 @@ if (process.env.INSTRUMENTATION_ENABLED === "true") {
   }
 }
 
+/** The largest request body accepted (413 over it, before it is read); no API call comes near it. */
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+
 export default {
   port: parseInt(process.env.PORT || "3000"),
   fetch: app.fetch,
   idleTimeout: 255,
+  maxRequestBodySize: MAX_BODY_BYTES,
+  // Production mode and an unshared port, whatever NODE_ENV says (lib/serve-mode.ts).
+  ...SERVE_MODE,
 };

@@ -120,10 +120,12 @@ mock.module("@redpoint-ai/skills", () => ({
     s.type === "expert" && s.dispatch !== true,
 }));
 
-// MCP client mock
+// MCP client mock. release() ends a turn's per-request MCP sessions.
+const mockRelease = mock(() => Promise.resolve());
 mock.module("../mcp/client.js", () => ({
   mcpManager: {
     getToolsForWorkspace: mock(() => Promise.resolve({})),
+    release: mockRelease,
     closeAll: mock(() => Promise.resolve()),
   },
 }));
@@ -309,6 +311,7 @@ describe("POST /api/v1/workspaces/:workspaceId/chat", () => {
         this.events.push(e);
       }
     }
+    mockRelease.mockClear();
     const sink = new RecordingSink();
     configureInstrumentation(sink);
     const savedEnvId = process.env.INSTRUMENTATION_USER_ID;
@@ -418,6 +421,12 @@ describe("POST /api/v1/workspaces/:workspaceId/chat", () => {
       expect(sub.userId).toBe(parent.userId);
       // Distinct event ids
       expect(sub.eventId).not.toBe(parent.eventId);
+      // The turn's per-request MCP sessions end with it (onFinish).
+      expect(mockRelease).toHaveBeenCalled();
+      // The turn's trace events belong to the caller (dev mode: "dev-user") — no one else reads them.
+      const { getTrace } = await import("../lib/trace-buffer.js");
+      expect(getTrace(wsId, "dev-user").length).toBeGreaterThan(0);
+      expect(getTrace(wsId, "someone-else")).toEqual([]);
     } finally {
       configureInstrumentation(null);
       if (savedEnvId === undefined) delete process.env.INSTRUMENTATION_USER_ID;

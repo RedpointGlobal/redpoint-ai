@@ -1,5 +1,5 @@
 /**
- * #27897 (Approach B) — the render_chart orchestrator tool.
+ * The render_chart orchestrator tool.
  *
  * The agent, AFTER pulling data via existing RPI/DRH tools, calls this with a
  * schema-validated chart spec (data + config, never JS). assistant-ui renders the
@@ -9,20 +9,20 @@
  * carried to the frontend as the tool args.
  *
  * Single source of truth: the LLM-facing inputSchema is derived from the shared
- * Zod ChartSpecSchema (zod-to-json-schema), and the same Zod schema is the strict
+ * Zod ChartSpecSchema (zod's native z.toJSONSchema), and the same Zod schema is the strict
  * validation gate in execute — no drift between contract, validation, and prompt.
  */
 import { tool, jsonSchema, type Tool } from "ai";
 import { ChartSpecSchema } from "@redpoint-ai/shared";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { z } from "zod";
 
 // JSON Schema the model emits against. Zod .refine()s are runtime-only (not
 // expressible in JSON Schema), so the strict rules (pie→1 yKey, keys-exist,
 // no extra props) are enforced by the safeParse in execute; the description +
 // this shape guide the model up front.
-const chartInputSchema = zodToJsonSchema(ChartSpecSchema, {
-  $refStrategy: "none",
-  target: "jsonSchema7",
+const chartInputSchema = z.toJSONSchema(ChartSpecSchema, {
+  target: "draft-7",
+  unrepresentable: "any",
 });
 
 const DESCRIPTION =
@@ -38,9 +38,9 @@ const DESCRIPTION =
 
 /**
  * Orchestrator system-prompt steering for charting. The tool description alone
- * didn't reliably trigger a call (Mark's first live test: the agent fetched the
+ * didn't reliably trigger a call (the first live test: the agent fetched the
  * data then returned a markdown table + "use your preferred visualization tool"
- * instead of calling render_chart, #27897). This makes the expectation explicit
+ * instead of calling render_chart). This makes the expectation explicit
  * in the system prompt. Appended unconditionally wherever render_chart is wired,
  * so it's present in every tier/workspace, not just skill workspaces.
  */
@@ -66,7 +66,12 @@ export const CHART_STEERING =
   "the available views. It renders inline in the chat; do not repeat the figures in " +
   "text. NEVER tell the user you can't create a dashboard, report, or visualization — " +
   "`render_view_dashboard` (dashboards) and `render_chart` (single charts) ARE how " +
-  "you create them.";
+  "you create them.\n\n" +
+  "An EXISTING saved RPI dashboard or widget asked for by its id or name (e.g. " +
+  "\"get the dashboard with id <guid>\") is a read, not a render: dispatch " +
+  "`execute_skill` with skillName `rpi-analysis` and operation `dashboards`, which " +
+  "fetches the saved object. Never answer such a request in text and never pass it " +
+  "to `render_view_dashboard`.";
 
 export function createRenderChartTool(): Tool {
   return tool({

@@ -36,12 +36,15 @@ import {
   buildRouterSystemPrompt,
   isDispatchable,
 } from "@redpoint-ai/skills";
+import { forwardedTokenOf } from "./auth.js";
 
 export interface ExecutorDeps {
   /** Workspace ID to route all A2A requests through */
   workspaceId: string;
   /** Pre-loaded skill registry (shared with chat route) */
   skillRegistry: SkillRegistry;
+  /** Inbound auth mode: in "oidc" every request must carry a verified user. */
+  authMode: "bearer" | "oidc";
 }
 
 /**
@@ -62,7 +65,15 @@ export class WorkspaceExecutor implements AgentExecutor {
     requestContext: RequestContext,
     eventBus: ExecutionEventBus,
   ): Promise<void> {
+    // The turn's MCP tools: their per-request sessions end with the turn (finally).
+    let mcpTools: Record<string, Tool> = {};
     try {
+      // oidc: tools run AS the verified caller (their token is forwarded, as the web
+      // chat does). Without one, refuse — never fall back to the service account.
+      const userToken = forwardedTokenOf(requestContext);
+      if (this.deps.authMode === "oidc" && !userToken) {
+        throw new Error("no verified user on this request — refusing to run tools as the service account");
+      }
       const userText = extractText(requestContext.userMessage);
 
       // Load the configured workspace
@@ -84,8 +95,8 @@ export class WorkspaceExecutor implements AgentExecutor {
       const config = configResult.data;
 
       // Build tools the same way chat.ts does
-      const mcpTools: Record<string, Tool> = config.mcp?.length
-        ? await mcpManager.getToolsForWorkspace(this.deps.workspaceId, config.mcp)
+      mcpTools = config.mcp?.length
+        ? await mcpManager.getToolsForWorkspace(this.deps.workspaceId, config.mcp, userToken)
         : {};
 
       const tools: Record<string, Tool> = {};
@@ -164,6 +175,7 @@ export class WorkspaceExecutor implements AgentExecutor {
       };
       eventBus.publish(errorResponse);
     } finally {
+      await mcpManager.release(mcpTools);
       eventBus.finished();
     }
   }

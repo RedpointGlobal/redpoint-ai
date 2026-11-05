@@ -56,7 +56,7 @@ export function registerSubjectAreaTools(server: McpServer, client: DRHApiClient
       title: "Upsert Subject Area",
       description: "Create or update a subject area. PUT /subject-areas.",
       inputSchema: {
-        body: z.record(z.unknown()).describe("Subject-area payload."),
+        body: z.record(z.string(), z.unknown()).describe("Subject-area payload."),
         clientId: drhClientIdSchema,
       },
       annotations: MUTATING,

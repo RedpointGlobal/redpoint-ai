@@ -17,7 +17,7 @@ import {
  * Note feeds use SINGULAR pause-automation / resume-automation sub-paths.
  */
 const feedBody = z
-  .record(z.unknown())
+  .record(z.string(), z.unknown())
   .describe("Feed payload (the OpenAPI Feed object).");
 
 export function registerFeedTools(server: McpServer, client: DRHApiClient) {
@@ -264,7 +264,7 @@ export function registerFeedTools(server: McpServer, client: DRHApiClient) {
       title: "Check Feed Name Availability",
       description: "Check whether a feed name is available. POST /feeds/check-name-availability.",
       inputSchema: {
-        body: z.record(z.unknown()).describe("Name-availability request payload."),
+        body: z.record(z.string(), z.unknown()).describe("Name-availability request payload."),
         clientId: drhClientIdSchema,
       },
       annotations: READ_ONLY,

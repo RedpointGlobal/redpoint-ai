@@ -281,7 +281,7 @@ This reduces per-request token costs by ~97% compared to exposing all tools dire
 
 ### Q: What skills come pre-built?
 
-Skills come in two roles: **action skills** define the *how* (each wraps one RPI domain's MCP tools), and **expert skills** define the *what* (domain knowledge, no tools). RedpointAI ships 15 skills across the two product workspaces: 11 action skills and 4 experts.
+Skills come in two roles: **action skills** define the *how* (each wraps one RPI domain's MCP tools), and **expert skills** define the *what* (domain knowledge, no tools). RedpointAI ships 28 skills across the two product workspaces: 24 action skills and 4 experts (RPI 21: 19 action + 2 experts; DRH 7: 5 action + 2 experts).
 
 **Action skills (the *how* — entity operations via MCP tools):**
 
@@ -377,7 +377,7 @@ MCP is an open standard for connecting AI models to external tools and data sour
 
 ### Q: What RPI capabilities are exposed via MCP?
 
-The RPI MCP server (`packages/mcp-rpi`) exposes 47 tools across 8 domains covering the full breadth of RPI's Integration API:
+The RPI MCP server (`packages/mcp-rpi`) exposes 197 tools: 44 hand-written tools across 8 domains (49 registered, 5 writes gated) plus 153 read tools generated from RPI's OpenAPI spec. The hand-written domains:
 
 | Domain | Tools | What You Can Do |
 |--------|-------|-----------------|
@@ -387,7 +387,7 @@ The RPI MCP server (`packages/mcp-rpi`) exposes 47 tools across 8 domains coveri
 | **clients** | 3 | List and look up clients (tenant/cluster discovery) |
 | **file-system** | 1 | Resolve a file's name/path by GUID |
 | **folders** | 2 | List and create folders |
-| **interactions** | 16 | List/get, walk the activity tree, triggers, run + control workflow instances, next-firing times |
+| **interactions** | 18 | List/get, walk the activity tree, triggers, run + control workflow instances, next-firing times |
 | **selection-rules** | 8 | List/get (Basic + Standard subtypes), count/waterfall/SQL-count runs, document definitions |
 
 ### Q: What are the specific tools available?
@@ -404,7 +404,7 @@ The RPI MCP server (`packages/mcp-rpi`) exposes 47 tools across 8 domains coveri
 
 **folders:** `list_folders`, `create_folder`
 
-**interactions:** `list_interactions`, `get_interaction_by_id`, `get_interaction_by_name`, `get_interaction_activity`, `get_interaction_trigger`, `get_interaction_available_inputs`, `get_interaction_default_metadata`, `get_interaction_workflows`, `get_interaction_workflow_activities`, `activate_interaction_workflow`, `run_interaction_workflow`, `get_workflow_instance_summary`, `get_interactions_workflow_status`, `get_interaction_workflow_instances`, `control_workflow_instance`, `calculate_interaction_next_firing_times`
+**interactions:** `list_interactions`, `get_interaction_by_id`, `get_interaction_by_name`, `get_interaction_activity`, `get_interaction_trigger`, `get_interaction_available_inputs`, `get_interaction_default_metadata`, `get_interaction_workflows`, `get_interaction_workflow_activities`, `activate_interaction_workflow`, `run_interaction_workflow`, `get_workflow_instance_summary`, `get_interactions_workflow_status`, `get_interaction_workflow_instances`, `control_workflow_instance`, `calculate_interaction_next_firing_times`, `summarize_interaction_runs`, `get_interaction_run_counts`
 
 **selection-rules:** `list_selection_rules`, `get_selection_rule_by_name`, `get_basic_selection_rule_by_id`, `get_standard_selection_rule_by_id`, `run_selection_rule_count`, `run_selection_rule_waterfall`, `get_selection_rule_sql_count_query`, `list_basic_selection_rule_document_definitions`
 

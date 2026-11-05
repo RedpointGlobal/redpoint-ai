@@ -3,8 +3,8 @@ import { ChartSpecSchema } from "./chart.js";
 import { StatTileSchema } from "./stats.js";
 
 /**
- * #27897 (P2) — the DASHBOARD contract. Emitted by a view's `templateFn` and
- * re-validated by render_view_dashboard's execute (apps/server, #27957 Phase 2),
+ * P2 — the DASHBOARD contract. Emitted by a view's `templateFn` and
+ * re-validated by render_view_dashboard's execute (apps/server, Phase 2),
  * then rendered by <AgentDashboard> (apps/web) from the tool result.
  *
  * A view: an optional header, an optional KPI stat-tile row, and one or more chart

@@ -12,10 +12,6 @@ mcpToolFilter:
   - get_user_group_by_name
   - get_user_permissions
   - list_available_permissions
-operations:
-  users: [list_users, get_user_details]
-  groups: [list_user_groups, get_user_group, get_user_group_by_name]
-  permissions: [get_user_permissions, list_available_permissions]
 maxSteps: 5
 tags: [rpi, users, permissions, groups, administration]
 ---
@@ -43,20 +39,25 @@ the wrong home — say so rather than answering from the client directory.
 
 Apply foundation guidance: respect `clientId`, show names not IDs.
 
-## Tool inventory & operations
+## Tool inventory
 
-- **users** — `list_users` (the tenant's configured users, id + name) and
+- **Users** — `list_users` (the tenant's configured users, id + name) and
   `get_user_details` (one client user's config, including group memberships;
   `OnlyActiveGroups=true` to limit to active groups).
-- **groups** — `list_user_groups` (all groups; groups bundle users for permission
+- **Groups** — `list_user_groups` (all groups; groups bundle users for permission
   assignment), `get_user_group` (one group by id, with members),
   `get_user_group_by_name` (same record by exact name).
-- **permissions** — `get_user_permissions` (what one named user actually has) vs
+- **Permissions** — `get_user_permissions` (what one named user actually has) vs
   `list_available_permissions` (the full catalog of permissions that CAN be
   assigned). Name-the-user question → `get_user_permissions`; "what permissions
   exist / can be granted" → `list_available_permissions`.
 
-Missing/unknown operation falls back to the full inventory (safe).
+## No operations — the whole menu, always
+
+This skill declares no `operations:`: its seven tools are one small menu, and the
+sub-agent always gets all of them. An operation chosen from the question could
+only hide the tool it needed — a user's permissions under the users operation, or
+the user list under permissions — so none is offered.
 
 ## Common workflows
 

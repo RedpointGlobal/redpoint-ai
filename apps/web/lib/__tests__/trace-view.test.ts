@@ -1,5 +1,5 @@
 /**
- * #27897 Bug 2 — the traffic-panel view boundary. These lock the exact rule that
+ * The traffic-panel view boundary. These lock the exact rule that
  * replaced the destructive on-open buffer clear: hide a PREVIOUS page view's
  * replayed events, keep THIS view's own (including a run made before the panel was
  * opened).

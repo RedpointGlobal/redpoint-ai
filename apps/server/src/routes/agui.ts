@@ -24,6 +24,8 @@ import { getSkillRegistry } from "../skills/registry-singleton.js";
 import { resolveTier } from "../agents/tier-resolver.js";
 import { extractListToolsCapability } from "../mcp/mcp-category-discovery.js";
 import { appendTrace, truncateForMessage } from "../lib/trace-buffer.js";
+import { findOwnedThread } from "./threads.js";
+import { callerId } from "../auth/caller.js";
 import type { TelemetryEvent } from "@redpoint-ai/shared";
 
 
@@ -49,13 +51,8 @@ aguiRoutes.post(
       .where(eq(workspaces.id, workspaceId));
     if (!workspace) return c.json({ error: "Workspace not found" }, 404);
 
-    // Verify thread exists
-    const [thread] = await db
-      .select()
-      .from(threads)
-      .where(
-        and(eq(threads.id, threadId), eq(threads.workspaceId, workspaceId)),
-      );
+    // The caller's own thread in this workspace (anything else: the same 404).
+    const thread = await findOwnedThread(c, workspaceId, threadId);
     if (!thread) return c.json({ error: "Thread not found" }, 404);
 
     // Verify run exists
@@ -199,7 +196,7 @@ aguiRoutes.post(
         // Telemetry — same TelemetryEvent shape as chat.ts and the terminal
         // agent. Append to the per-workspace trace buffer; readable via
         // GET /api/v1/workspaces/:id/trace.
-        const emit = (event: TelemetryEvent) => appendTrace(workspaceId, event);
+        const emit = (event: TelemetryEvent) => appendTrace(workspaceId, callerId(c), event);
         let stepCounter = 0;
         const startMs = Date.now();
 

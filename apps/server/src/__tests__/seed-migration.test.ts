@@ -76,6 +76,10 @@ function makeDb(path: string, mode: "empty" | "legacy"): void {
     id TEXT PRIMARY KEY, workspace_id TEXT REFERENCES workspaces(id))`);
   db.run(`CREATE TABLE audit_logs (
     id TEXT PRIMARY KEY, workspace_id TEXT REFERENCES workspaces(id))`);
+  db.run(`CREATE TABLE thread_owners (
+    thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE, user_id TEXT NOT NULL)`);
+  db.run(`CREATE TABLE api_key_owners (
+    key_id TEXT PRIMARY KEY REFERENCES api_keys(id) ON DELETE CASCADE, user_id TEXT NOT NULL)`);
 
   if (mode === "legacy") {
     const now = Date.now();
@@ -484,5 +488,60 @@ describe("seed — product workspace identity + legacy rename", () => {
 
     expect(healed.c).toBe(1); // missing table created
     expect(thread).not.toBeNull(); // pre-existing conversation survived the heal
+  }, 30_000);
+
+  // 7.179 upgrade: a 7.178-era volume has no owner tables (thread_owners,
+  // api_key_owners). Boot adds them (additive push, no ALTER), the existing
+  // conversation survives, and it has NO owner — so the thread routes hide it from
+  // every authenticated caller (the documented clean cut; dev mode still sees it).
+  it("an install upgraded to 7.179 gains the owner tables; its existing threads survive, unowned", () => {
+    const path = join(workDir, "owners.db");
+    boot(path);
+    const setup = new Database(path);
+    const ws = setup.query("SELECT id FROM workspaces LIMIT 1").get() as { id: string };
+    const now = Date.now();
+    setup.run(
+      "INSERT INTO threads (id,workspace_id,title,created_at,updated_at) VALUES (?,?,?,?,?)",
+      ["pre-7304-thread", ws.id, "a conversation from before owners", now, now],
+    );
+    setup.run("DROP TABLE thread_owners");
+    setup.run("DROP TABLE api_key_owners");
+    setup.close();
+
+    boot(path);
+
+    const check = new Database(path);
+    const tables = (check.query("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map((t) => t.name);
+    const thread = check.query("SELECT id FROM threads WHERE id = ?").get("pre-7304-thread");
+    const owner = check.query("SELECT user_id FROM thread_owners WHERE thread_id = ?").get("pre-7304-thread");
+    check.close();
+
+    expect(tables).toContain("thread_owners");
+    expect(tables).toContain("api_key_owners");
+    expect(thread).not.toBeNull();
+    expect(owner).toBeNull();
+  }, 30_000);
+
+  // The real-world upgrade that bit: the database ALSO holds a table the schema
+  // doesn't know (a leftover from another build). drizzle-kit push then asks
+  // whether each new table is a rename of it; unattended, that prompt fails (exit
+  // 0, nothing applied). The owner tables must still appear — created explicitly.
+  it("an upgraded install with an unknown leftover table still gains the owner tables (no interactive push)", () => {
+    const path = join(workDir, "leftover.db");
+    boot(path);
+    const setup = new Database(path);
+    setup.run("CREATE TABLE door_conversations (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, history TEXT NOT NULL)");
+    setup.run("DROP TABLE thread_owners");
+    setup.run("DROP TABLE api_key_owners");
+    setup.close();
+
+    boot(path);
+
+    const check = new Database(path);
+    const tables = (check.query("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map((t) => t.name);
+    check.close();
+    expect(tables).toContain("thread_owners");
+    expect(tables).toContain("api_key_owners");
+    expect(tables).toContain("door_conversations"); // left alone
   }, 30_000);
 });

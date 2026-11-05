@@ -337,7 +337,7 @@ describe("pruneMessageHistory — estimator both-bounds calibration", () => {
         ] as ModelMessage["content"],
       },
       { role: "assistant", content: "I've listed your clients." },
-      user("List audiences for client e0633f… with names starting with 'JB'."),
+      user("List audiences for client 0a1b2c… with names starting with 'JB'."),
     ];
     calibrateBoth(msgs, "5/21 shape");
   });

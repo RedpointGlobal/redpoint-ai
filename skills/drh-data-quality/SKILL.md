@@ -40,9 +40,15 @@ automatically — you don't supply, resolve, or ask for one. Just act; pass an i
 names a specific data-quality record or subject area.
 
 - **Quality** — report hygiene scores, match confidence, or processed matches when the user asks how
-  clean/matched/ready the data is.
+  clean/matched/ready the data is. For `drh_get_hygiene_scores`, `drh_get_match_confidence` and
+  `drh_get_processed_matches`, `count` is a **look-back window in days** from today, not a number of
+  records: always pass it — the user's period in days when they name one ("last 30 days" → 30),
+  otherwise `count: 3650`. A small count, or none, can return an empty list even when history exists.
 - **Subject areas** — list the subject areas or fetch one and its columns when asked about the data
   model / schema.
+  A name is not an id: never derive or guess an id from a name or its digits. Find the name in the
+  list tool's results to get its id, then fetch by that id; if the name isn't listed, say it wasn't
+  found — do not invent an id.
 
 Relay the tool's response back clearly. This skill is **read-only** — it reports metrics, it does
 not create or delete data-quality records or edit subject areas. Conceptual questions ("what *is*

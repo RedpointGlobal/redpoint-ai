@@ -1,5 +1,5 @@
 /**
- * #27828 — LLM-driven multi-tenant switching. Exhaustive matrix:
+ * LLM-driven multi-tenant switching. Exhaustive matrix:
  * resolution (name/id/substring/ambiguous/not-found), the per-conversation +
  * per-user store (persistence-across-turns, isolation-across-conversations,
  * no-cross-USER-bleed), and the switch tool (RBAC up-front reject, ambiguous

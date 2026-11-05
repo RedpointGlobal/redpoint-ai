@@ -1,5 +1,5 @@
 /**
- * Traffic-panel view boundary (#27897 Bug 2).
+ * Traffic-panel view boundary.
  *
  * The apps/server trace buffer is process-global and outlives page reloads, so on
  * SSE connect it replays events from a PREVIOUS page view. The panel used to wipe

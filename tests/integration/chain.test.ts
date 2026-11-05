@@ -73,6 +73,11 @@ describe.skipIf(shouldSkip)(`LLM accuracy — chains`, () => {
       `[${sc.id}]`,
       async () => {
         const cache = getChainCache(sc.cacheKey);
+        if (cache.error) {
+          // This key's setup failed (e.g. a read the eval's login may not make): this
+          // scenario fails with that reason; the other chains still run.
+          throw new Error(`chain setup for ${sc.cacheKey}: ${cache.error}`);
+        }
         if (!cache.name) {
           console.log(
             `  ${sc.id}: SKIP — no ${sc.cacheKey} records in workspace`,
@@ -133,7 +138,7 @@ describe.skipIf(shouldSkip)(`LLM accuracy — chains`, () => {
             );
           });
 
-          const passed = routingOk && textNameOk && toolCallOk;
+          const passed = routingOk && toolCallOk && (sc.outcomeAgnostic === true || textNameOk);
           return {
             passed,
             routingOk,

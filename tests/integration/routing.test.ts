@@ -26,10 +26,20 @@ import {
   isWorkspaceUsable,
   runN,
   runPrompt,
+  getDispatchArgs,
 } from "./helpers.js";
-import { selectScenarios, selectDrhScenarios, DRH_SCENARIOS } from "./scenarios.js";
+import { selectScenarios, selectDrhScenarios, DRH_SCENARIOS, menuGapTrips } from "./scenarios.js";
+// Relative, not the workspace alias — tests/ is not a workspace package.
+import { loadSkillsFromDirectory } from "../../packages/skills/src/loader.js";
+import { fileURLToPath } from "url";
 // Relative, not the workspace alias — tests/ is not a workspace package.
 import { WORKSPACE_NAMES } from "../../packages/shared/src/index.js";
+
+// Each skill's Pattern A operations, from the same skills/ the server loads: the
+// menu-gap tripwire checks the op the router passed against these menus.
+const SKILL_OPERATIONS = Object.fromEntries(
+  (await loadSkillsFromDirectory(fileURLToPath(new URL("../../skills/", import.meta.url)))).map((s) => [s.name, s.operations]),
+);
 
 const envCheck = accuracyEvaluationEnvOk();
 const shouldSkip = !envCheck.ok;
@@ -130,8 +140,9 @@ describe.skipIf(shouldSkip)(`LLM accuracy — routing`, () => {
           // see LLM-typo-class flakes without false-positive routing
           // failures. See the assertion-shape comment block below.
           let firstDispatchDeviation = false;
+          let menuGaps: string[] = [];
           if (sc.expectedOrchestratorToolPattern) {
-            // Phase 2 (#27957) orchestrator-tool routing: a dashboard prompt routes
+            // Phase 2 orchestrator-tool routing: a dashboard prompt routes
             // to render_view_dashboard DIRECTLY (no execute_skill). Assert the parent
             // called the expected tool with the expected viewId — the routing DECISION.
             const orch = getOrchestratorToolCalls(traceEvents);
@@ -161,7 +172,7 @@ describe.skipIf(shouldSkip)(`LLM accuracy — routing`, () => {
             const containsOk =
               !sc.textContains ||
               finalText.toLowerCase().includes(sc.textContains.toLowerCase());
-            // Tool-hit guard (#27634): when a scenario pins expectedToolNamePattern,
+            // Tool-hit guard: when a scenario pins expectedToolNamePattern,
             // the sub-agent must have called that exact (namespaced) MCP tool —
             // proves the description routed to the right tool, not just the skill.
             // Backward-compatible: undefined pattern → toolHitOk true (the existing
@@ -179,8 +190,12 @@ describe.skipIf(shouldSkip)(`LLM accuracy — routing`, () => {
               !subAgentToolCalls.some((t) =>
                 sc.forbiddenToolNamePattern!.test(t.toolName),
               );
+            // Menu-gap tripwire: the router passed an operation whose menu hides the
+            // required tool (scenarios.ts menuGapTrips) — fails the run and names the op.
+            menuGaps = menuGapTrips(sc, getDispatchArgs(traceEvents), SKILL_OPERATIONS);
             passed = !!(
               routingOk &&
+              menuGaps.length === 0 &&
               textOk &&
               containsOk &&
               toolHitOk &&
@@ -198,7 +213,7 @@ describe.skipIf(shouldSkip)(`LLM accuracy — routing`, () => {
             traceEvents,
             firstDispatchDeviation,
             streamStats,
-            error: undefined as string | undefined,
+            error: (menuGaps.length ? `menu-gap tripwire: ${menuGaps.join("; ")}` : undefined) as string | undefined,
           };
         },
           failFactory,
@@ -387,7 +402,7 @@ describe.skipIf(shouldSkip || !drhUsable)(`LLM accuracy — Data Readiness Hub t
         const { results, passRate } = await runN(
           n,
           async () => {
-            const { traceEvents } = await runPrompt(sc.prompt, {
+            const { traceEvents, parentText } = await runPrompt(sc.prompt, {
               workspaceId: wsId,
             });
             const allDispatches = getAllDispatches(traceEvents);
@@ -405,9 +420,17 @@ describe.skipIf(shouldSkip || !drhUsable)(`LLM accuracy — Data Readiness Hub t
             // proof we hit the mcp-drh server, not merely dispatched the skill.
             const toolHitOk =
               !sc.expectedToolNamePattern ||
-              toolNames.some((nm) => sc.expectedToolNamePattern!.test(nm));
+              subAgentToolCalls.some(
+                (t) =>
+                  sc.expectedToolNamePattern!.test(t.toolName) &&
+                  (!sc.expectedToolArgs || sc.expectedToolArgs((t.args ?? {}) as Record<string, unknown>)),
+              );
+            const noFalseClaimOk =
+              !sc.textNotMatches || !sc.textNotMatches.some((p) => p.test(`${parentText} ${finalText}`));
             // Cross-workspace isolation: a Data Readiness Hub turn must call NO rpi__ tool.
             const leaked = toolNames.filter((nm) => /^rpi__/.test(nm));
+            // Menu-gap tripwire (scenarios.ts menuGapTrips), as in the main block.
+            const menuGaps = menuGapTrips(sc, getDispatchArgs(traceEvents), SKILL_OPERATIONS);
 
             return {
               passed: !!(
@@ -415,14 +438,16 @@ describe.skipIf(shouldSkip || !drhUsable)(`LLM accuracy — Data Readiness Hub t
                 textOk &&
                 containsOk &&
                 toolHitOk &&
-                leaked.length === 0
+                noFalseClaimOk &&
+                leaked.length === 0 &&
+                menuGaps.length === 0
               ),
               allDispatches,
               toolNames,
               leaked,
               toolHitOk,
               finalText,
-              error: undefined as string | undefined,
+              error: (menuGaps.length ? `menu-gap tripwire: ${menuGaps.join("; ")}` : undefined) as string | undefined,
             };
           },
           failFactory,

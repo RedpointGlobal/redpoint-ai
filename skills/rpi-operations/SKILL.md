@@ -12,11 +12,6 @@ mcpToolFilter:
   - list_execution_services
   - get_job_status
   - get_job_log
-operations:
-  logs: [get_operation_audit_history, get_operation_sql_audit_history, get_operation_housekeeping_logs]
-  tasks: [list_operation_system_tasks]
-  services: [list_execution_services]
-  jobs: [get_job_status, get_job_log]
 maxSteps: 5
 tags: [rpi, operations, logs, jobs, diagnostics]
 ---
@@ -45,14 +40,12 @@ Apply foundation guidance: respect `clientId`, show names not IDs.
 - `get_job_status` — current state/progress of a job.
 - `get_job_log` — a job's log output.
 
-## Operations (menu-narrowing)
+## No operations — the whole menu, always
 
-- **logs** — audit / SQL-audit / housekeeping.
-- **tasks** — system tasks.
-- **services** — execution services.
-- **jobs** — job status + log.
-
-Missing/unknown operation falls back to the full inventory (safe).
+This skill declares no `operations:`: its seven tools are one small menu, and the
+sub-agent always gets all of them. An operation chosen from the question could
+only hide the tool it needed — execution services under logs, or the audit trail
+under jobs — so none is offered.
 
 ## Common workflows
 

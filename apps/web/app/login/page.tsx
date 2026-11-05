@@ -18,14 +18,12 @@ import {
 const SSO_LABEL = "Single Sign-On";
 
 function LoginForm() {
-  // SSO (Keycloak) — the PRIMARY path (top). Native RPI stays below.
-  const [ssoUsername, setSsoUsername] = useState("");
-  const [ssoPassword, setSsoPassword] = useState("");
+  // SSO (redirect) — the PRIMARY path (top). Native RPI stays below.
   const [rpiUsername, setRpiUsername] = useState("");
   const [rpiPassword, setRpiPassword] = useState("");
   const [error, setError] = useState("");
   // Which path is active (or null) — disables all controls during any of them.
-  const [pending, setPending] = useState<null | "redirect" | "kc" | "rpi">(null);
+  const [pending, setPending] = useState<null | "redirect" | "rpi">(null);
 
   // Autofill hardening. Chrome ignores autocomplete="section-*" on credential
   // fields and pre-fills its one saved Keycloak credential into EVERY
@@ -74,9 +72,9 @@ function LoginForm() {
 
   // SSO — the CORRECT path: authorization_code + PKCE redirect to
   // the OIDC IdP (provider id "sso"). Full-page redirect (no redirect:false).
-  // NOTE: until OUR redirect URI is registered on the realm's `rpi` client this
-  // 400s "invalid redirect_uri" — expected/deferred. The password paths below
-  // work today meanwhile.
+  // The deploying org registers this app's redirect URI on its realm's client
+  // (lib/keycloak-sso.ts expectedRedirectUri); until it does, the IdP refuses the
+  // redirect ("invalid redirect_uri") and native RPI credentials are the way in.
   //
   // Environment Location: the redirect can't pass a credential, so we first POST
   // the entered location to /api/rpi-location/select, which SSRF-validates it and
@@ -116,27 +114,23 @@ function LoginForm() {
     void signIn("sso", { callbackUrl });
   }
 
-  // Interim password paths — OAuth2 password grants forwarded as X-RPI-Token
-  // (Mechanism B): "keycloak-sso" hits the realm's Keycloak endpoint (public
-  // client), "rpi-native" hits RPI's /connect/token. Wiring: lib/auth.ts;
-  // Keycloak discovery/grants: lib/keycloak-sso.ts.
+  // Native RPI credentials — RPI's /connect/token password grant, forwarded as
+  // X-RPI-Token (Mechanism B). Wiring: lib/auth.ts ("rpi-native").
   async function submit(
-    provider: "keycloak-sso" | "rpi-native",
-    which: "kc" | "rpi",
     username: string,
     password: string,
     // Native RPI only — the entered Environment Location (blank → env default).
     rpiUrl?: string,
   ) {
     if (!username || !password) return;
-    setPending(which);
+    setPending("rpi");
     setError("");
 
     // If a location was entered, verify it's permitted BEFORE signing in, so a
     // rejected location gets an EXPLICIT message distinct from a credential
     // failure. (The server authorize() also rejects it — this is for the UX.)
     const loc = rpiUrl?.trim();
-    if (which === "rpi" && loc) {
+    if (loc) {
       try {
         const r = await fetch(`/api/rpi-location?url=${encodeURIComponent(loc)}`);
         const d = (await r.json()) as { urlAllowed?: boolean | null };
@@ -152,18 +146,14 @@ function LoginForm() {
       }
     }
 
-    const result = await signIn(provider, {
+    const result = await signIn("rpi-native", {
       username,
       password,
-      ...(which === "rpi" ? { rpiUrl: loc ?? "" } : {}),
+      rpiUrl: loc ?? "",
       redirect: false,
     });
     if (result?.error) {
-      setError(
-        which === "kc"
-          ? "SSO password sign-in failed. Check your username and password."
-          : "RPI login failed. Check your username and password.",
-      );
+      setError("RPI login failed. Check your username and password.");
       setPending(null);
     } else {
       window.location.href = callbackUrl;
@@ -211,58 +201,6 @@ function LoginForm() {
         {/* divider */}
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span className="h-px flex-1 bg-border" />
-          or sign in with a password
-          <span className="h-px flex-1 bg-border" />
-        </div>
-
-        {/* INTERIM — SSO via password grant (works before our redirect
-            URI is registered on the realm client) */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit("keycloak-sso", "kc", ssoUsername, ssoPassword);
-          }}
-          className="flex flex-col gap-3"
-        >
-          <div className="space-y-2">
-            <Label htmlFor="sso-username">{SSO_LABEL} username</Label>
-            <Input
-              id="sso-username"
-              type="text"
-              autoComplete="section-sso username"
-              readOnly={!unlocked.has("sso-username")}
-              onFocus={() => unlock("sso-username")}
-              value={ssoUsername}
-              onChange={(e) => setSsoUsername(e.target.value)}
-              disabled={busy}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="sso-password">Password</Label>
-            <Input
-              id="sso-password"
-              type="password"
-              autoComplete="section-sso current-password"
-              readOnly={!unlocked.has("sso-password")}
-              onFocus={() => unlock("sso-password")}
-              value={ssoPassword}
-              onChange={(e) => setSsoPassword(e.target.value)}
-              disabled={busy}
-            />
-          </div>
-          <Button
-            type="submit"
-            variant="outline"
-            className="w-full"
-            disabled={busy || !ssoUsername || !ssoPassword}
-          >
-            {pending === "kc" ? "Signing in…" : `Sign in with ${SSO_LABEL} password`}
-          </Button>
-        </form>
-
-        {/* divider */}
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span className="h-px flex-1 bg-border" />
           or sign in with native RPI credentials
           <span className="h-px flex-1 bg-border" />
         </div>
@@ -271,7 +209,7 @@ function LoginForm() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            submit("rpi-native", "rpi", rpiUsername, rpiPassword, rpiLocation);
+            submit(rpiUsername, rpiPassword, rpiLocation);
           }}
           className="flex flex-col gap-3"
         >

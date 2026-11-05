@@ -24,6 +24,7 @@ operations:
     - drh_list_database_feeds
     - drh_list_database_feeds_page
   get:
+    - drh_list_feeds
     - drh_get_feed_by_id
     - drh_get_database_feed
     - drh_get_feed_metadata
@@ -52,6 +53,9 @@ explicitly names a different one.
 
 - **List** the feeds when the user asks what feeds exist / to see them.
 - **Get** a single feed, its metadata, or a database's feed summary when the user names or ids one.
+  A name is not an id: never derive or guess an id from a name or its digits. Find the name in the
+  list tool's results to get its id, then fetch by that id; if the name isn't listed, say it wasn't
+  found — do not invent an id.
 - **Versions** — report a feed's version history or a specific version when asked.
 - **Columns** — report a feed's columns or match fields when asked about its schema/mapping.
 

@@ -17,7 +17,7 @@ import {
  * caller supplies the OpenAPI Database payload); reads/deletes are typed.
  */
 const dbBody = z
-  .record(z.unknown())
+  .record(z.string(), z.unknown())
   .describe("Database payload (the OpenAPI Database object).");
 
 export function registerDatabaseTools(server: McpServer, client: DRHApiClient) {
@@ -196,7 +196,7 @@ export function registerDatabaseTools(server: McpServer, client: DRHApiClient) {
       description: "Set the data-model config set. PUT /databases/{id}/dm-config-set.",
       inputSchema: {
         databaseId: numericIdSchema("Database id"),
-        body: z.record(z.unknown()).describe("DM config-set payload."),
+        body: z.record(z.string(), z.unknown()).describe("DM config-set payload."),
         clientId: drhClientIdSchema,
       },
       annotations: MUTATING,
